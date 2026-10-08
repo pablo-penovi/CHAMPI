@@ -1,8 +1,29 @@
 # CHAMPI implementation plan
 
 CHAMPI is a native Linux virtual instrument that runs the real CHOMPI TAPE firmware on x86.
-The design is in [PORT.md](PORT.md). This file splits that design into chunks. Each chunk ends
+The design is in [PORT.md](../PORT.md). This file splits that design into chunks. Each chunk ends
 with something that builds, has tests, and gets committed and pushed.
+
+## Progress
+
+Tick a chunk's box when its PR is merged into `main`.
+
+| Done | # | Chunk | Done when |
+|:---:|---|---|---|
+| ☐ | 0 | Repo skeleton: the CHOMPI and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
+| ☐ | 1 | The real TAPE firmware sources compile and link against placeholder hardware stand-ins | No missing pieces at link time |
+| ☐ | 2 | Virtual SD card: FatFS on a disk-image file, formatting, seeding with the factory card, import/export | Format, seed and read-back test passes |
+| ☐ | 3 | Models of each piece of hardware (shift registers, encoders, battery charger, LEDs), no threading yet | Unit tests pass, using the firmware's own encoder and LED code |
+| ☐ | 4 | Emulated chip that runs the firmware's interrupts in priority order, plus the headless runner | Recorded-output tests pass (boot, playing keys, encoders, presets) and sanitizers are clean |
+| ☐ | 5 | DPF app with audio and MIDI only, and a rough placeholder screen | A MIDI controller plays it through JACK with no audio dropouts |
+| ☐ | 6 | The real panel: vector drawing, layout taken from the `.brd` files, LED rendering, mouse control | It looks like the reference image and plays fully by mouse |
+| ☐ | 7 | Computer keyboard control with a configurable keymap | It plays fully without the mouse |
+| ☐ | 8 | Polish: shift menus, looper and recording, test mode, removing the SD card, encoder feel, README | Everything in PORT.md's milestone 5 is covered |
+| ☐ | 9 | Later: TEMPO and WAVE | |
+
+Biggest risks: chunk 1 (the bundled libDaisy is a modified fork, so the stand-in may grow) and
+chunk 4 (signal-based interrupt emulation is the most fragile part; a single-lock fallback is
+described below).
 
 ## Repo layout
 
@@ -20,10 +41,11 @@ CHAMPI/
   app/             DPF plugin + NanoVG UI
   tools/           champi-headless, panel layout extractor
   tests/
-  docs/            PORT.md, PLAN.md
+  docs/            PORT.md
+    planning/      OVERALL_PLAN.md (this file)
 ```
 
-## Chunks
+## Chunk details
 
 ### 0. Repo skeleton
 - Add the submodules: CHOMPI pinned to `a73d732`, and DPF pinned to a release tag.
