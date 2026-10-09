@@ -17,12 +17,12 @@ concurrency:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.check.outputs.version }}
       release: ${{ steps.check.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -54,7 +54,7 @@ jobs:
   build:
     needs: version
     if: needs.version.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # GCC 16, as CHAMPI is developed with. The image is Debian 13, so the binary needs glibc 2.41
     # or newer; libstdc++ is linked in, since the image's GCC isn't the system one.
     container: gcc:16
@@ -71,7 +71,7 @@ jobs:
             libjack-jackd2-dev libsamplerate0-dev \
             libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libdbus-1-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -95,7 +95,7 @@ jobs:
           strip "dist/$name/champi"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tarball
           path: dist/*.tar.gz
@@ -103,11 +103,11 @@ jobs:
 
   release:
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: tarball
           path: dist
