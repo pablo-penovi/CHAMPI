@@ -241,6 +241,46 @@ CHAMPI/
 - A placeholder UI: plain rectangles for the keys, LED colours, and a CPU-load readout.
 - **Done when:** a MIDI controller plays the instrument through PipeWire-JACK, and there are no
   xruns at a 64-frame buffer.
+- As built:
+  - `app/` builds `build/bin/champi` with `dpf_add_plugin(champi TARGETS jack UI_TYPE opengl)`.
+    The JACK client is `CHAMPI`, with ports `mic`, `line_l`, `line_r`, `master_l/r`, `phones_l/r`,
+    `events-in` and `midi-out`. Under PipeWire, DPF's jackbridge loads `pipewire-jack`'s libjack, so
+    no JACK server is needed.
+  - DPF's standalone `main()` is compiled as `dpf_jack_main` (`-Dmain=` on `DistrhoPluginMain.cpp`
+    in the `champi-jack` target only), so `app/main.cpp` can run CHAMPI's options first: the
+    `sd_cli` options (reset, import and export run and exit, as there's no script to run after them)
+    and `--no-connect`. Anything else, such as DPF's `embed <id>`, goes on to DPF.
+  - `ChampiPlugin` starts the `Runtime` with `AudioClock::kHost` in its constructor and stops it in
+    its destructor; DPF builds the plugin once in the standalone. `run()` writes every JACK MIDI
+    event to the virtual TRS port, runs the audio, and splits the firmware's MIDI out into events
+    (`core/midi_splitter`: running status, real-time bytes; SysEx dropped, TAPE sends none).
+  - `core/host_audio` (`champi_host`) maps the channels (mic, line L/R onto the firmware's inputs 1,
+    3 and 4; master out first) and calls `ProcessAudio` directly at 48 kHz. At other rates it
+    converts both ways with libsamplerate (`SRC_SINC_FASTEST`), with a small FIFO that only starts
+    playing once the converters have filled it. It measures the load (the share of each cycle spent
+    waiting on the firmware), late blocks (`ProcessAudio` timed out after audio had started) and
+    resampler dropouts.
+  - DPF's standalone doesn't connect ports or report xruns, so `app/jack_monitor` opens a second
+    small client, `CHAMPI monitor`. It counts xruns and, unless `--no-connect` is given, connects
+    master out to the first two physical playback ports and every physical MIDI source (except
+    "Midi Through") to `events-in`. PipeWire lists ALSA sequencer devices as physical JACK MIDI
+    ports, so this replaces the separate ALSA-seq auto-connect of the plan. Under a JACK2 server
+    without a2jmidid, ALSA-only controllers need connecting by hand.
+  - The UI goes through `DISTRHO_PLUGIN_WANT_DIRECT_ACCESS` for the load figures. Panel state and
+    LEDs come from `Runtime::Get()` directly, since both are process singletons. The placeholder
+    panel already plays by mouse (click keys, scroll and click encoders, toggle and line-in boxes),
+    scaling the LEDs up by 4 and 11 so they show. It fits itself into whatever size the window
+    manager gives it.
+  - Checked with a JACK probe client at `PIPEWIRE_QUANTUM=64/48000`: MIDI note 60 plays C4 at
+    261.60 Hz and notes 64, 65 and 67 land on E4, F4 and G4. There were no xruns, late blocks or
+    dropouts in a 90 s run with notes, including during a 32-core parallel build. At 64/44100 (the
+    resampled path) C4 measured 261.59 Hz, again with no xruns, late blocks or dropouts. The load
+    reads about 3-4% of a 64-frame cycle.
+  - With every core saturated (48 busy loops on 32 cores) there were still no xruns, but 2 late
+    blocks: the firmware thread runs at normal priority and can be starved. Making it real-time
+    would be a daisycola change (the thread is created there and is about 28% busy in steady
+    state, mostly polling), so it's left for later.
+  - Still manual: playing it from a real MIDI controller, which is the done-when.
 
 ### 6. Panel UI
 - A layout extractor that reads the enclosure and main-board `.brd` files and writes

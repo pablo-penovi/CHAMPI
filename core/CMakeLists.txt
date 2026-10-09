@@ -41,3 +41,11 @@ target_link_libraries(champi_board PUBLIC daisycola PRIVATE champi_warnings)
 add_library(champi_runtime STATIC runtime.cpp)
 target_include_directories(champi_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_runtime PUBLIC champi_board PRIVATE champi_fw_tape champi_warnings)
+
+# What a host audio callback needs around the firmware: channel mapping, resampling and the
+# firmware's MIDI out split into messages.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SAMPLERATE REQUIRED IMPORTED_TARGET samplerate)
+add_library(champi_host STATIC host_audio.cpp midi_splitter.cpp)
+target_include_directories(champi_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(champi_host PUBLIC daisycola PRIVATE PkgConfig::SAMPLERATE champi_warnings)

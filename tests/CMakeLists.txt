@@ -27,9 +27,11 @@ add_executable(champi-tests
     sd_card_test.cpp
     script_test.cpp
     sd_cli_test.cpp
+    host_test.cpp
 )
 target_link_libraries(champi-tests PRIVATE
-    champi_board champi_sd champi_script champi_test_tape_encoder champi_warnings GTest::gtest_main)
+    champi_board champi_sd champi_script champi_host champi_test_tape_encoder champi_warnings
+    GTest::gtest_main)
 gtest_discover_tests(champi-tests DISCOVERY_MODE PRE_TEST)
 
 # Golden tests: scripts run through champi-headless, one firmware process per run.
