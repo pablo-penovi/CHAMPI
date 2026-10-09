@@ -42,3 +42,17 @@ target_compile_definitions(champi-headless-tests PRIVATE
     CHAMPI_FACTORY_CARD_DIR="${CHOMPI_DIR}/firmware/card-profiles/tape-2.0")
 add_dependencies(champi-headless-tests champi-headless)
 gtest_discover_tests(champi-headless-tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 300)
+
+# The on-screen panel's layout, hit-testing, LED look and mouse handling, on a PanelState of its
+# own (one per process).
+add_executable(champi-panel-tests panel_test.cpp)
+target_link_libraries(champi-panel-tests PRIVATE champi_panel champi_warnings GTest::gtest_main)
+gtest_discover_tests(champi-panel-tests DISCOVERY_MODE PRE_TEST)
+
+# app/panel_layout.h must be what the extractor makes from the board files.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_test(NAME champi_panel_layout_up_to_date
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/extract_panel_layout.py --check
+                --chompi ${CHOMPI_DIR})
+endif()

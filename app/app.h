@@ -10,7 +10,11 @@ namespace champi
 struct AppOptions
 {
     std::filesystem::path sd_image;
+    std::filesystem::path skin_dir; // PNGs that replace the panel's logo and key glyphs
 };
+
+/** $XDG_CONFIG_HOME/champi/skin, or ~/.config/champi/skin; empty if neither is set. */
+std::filesystem::path DefaultSkinDir();
 
 /** The process's options, filled in by main before DPF starts. */
 AppOptions& Options();

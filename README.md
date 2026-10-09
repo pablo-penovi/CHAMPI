@@ -15,7 +15,8 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 Early work: the real TAPE firmware runs on daisycola's virtual MCU, from a virtual SD card, with
 the CHOMPI board model (panel wiring, battery charger, LED layout) around it. `champi` plays it
-through JACK or PipeWire with MIDI in and out, behind a placeholder panel. `champi-headless` plays
+through JACK or PipeWire with MIDI in and out, on a vector panel laid out from the board files and
+played with the mouse. `champi-headless` plays
 it from a script and records the audio and LEDs. The work is split into chunks, each ending in
 something that builds and has tests. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
@@ -82,9 +83,20 @@ little latency, so it's better to run the graph at 48 kHz. For a 64-frame buffer
 PIPEWIRE_QUANTUM=64/48000 build/bin/champi
 ```
 
-The panel is a placeholder for now: click keys, scroll over an encoder to turn it, click an
-encoder to push it, and click the toggle and mic/line boxes to flip them. The bottom line shows the
-rate and buffer size, the share of each cycle the firmware takes (load), JACK xruns, late blocks
+The panel is laid out from the CHOMPI board files and plays by mouse:
+
+- Click and hold a key to play it.
+- Drag an encoder up or down to turn it (up is clockwise), or scroll over it. Click it to push it;
+  hold the button still for a moment to keep it pushed, then drag to turn it while pushed.
+- Click the toggle switch to flip it (lever up is on), and the jack at the right edge to plug or
+  unplug line in. Without a plug the firmware records from the mic.
+
+The window keeps the panel's proportions. A skin folder can replace the logo and the glyphs on the
+CHOMPI, play and loop keys with your own art: `logo.png`, `chompi.png`, `play.png` and `loop.png`
+in `~/.config/champi/skin` (or under `$XDG_CONFIG_HOME`, or `--skin <dir>`), each optional. None is
+shipped.
+
+The line under the panel shows the rate and buffer size, the share of each cycle the firmware takes (load), JACK xruns, late blocks
 (cycles where the firmware didn't finish in time) and resampler dropouts. The same counts are
 printed on exit. `champi` takes the same SD-card options as `champi-headless`.
 
