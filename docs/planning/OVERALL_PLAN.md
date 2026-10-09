@@ -21,6 +21,9 @@ and ASan. So the daisycola side of chunks 1–4 is finished and the CHAMPI side 
 than first planned. One phase 5 check is left open: once chunk 4 uses `daisycola/host.h` for
 real, tidy it if it needs it. Phase 6 (TEMPO and WAVE) is for later, with chunk 9.
 
+Chunk 3 moved CHAMPI's pin to `7230242`: I2C `TransmitBlocking` now waits for a DMA read running
+on the same bus, as libDaisy's does. TAPE's medium-battery check depends on that.
+
 Where building daisycola changed the detailed plan, daisycola's
 [design notes](https://github.com/pablo-penovi/daisycola/blob/main/docs/design-notes.md) win. In
 short:
@@ -47,7 +50,7 @@ Tick a chunk's box when its PR is merged into `main`.
 |:---:|---|---|---|
 | ☑ | 0 | Repo skeleton: the CHOMPI, daisycola and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
 | ☑ | 1 | The real TAPE firmware sources compile and link against daisycola's stubs [daisycola 1] | No missing pieces at link time |
-| ☐ | 2 | Virtual SD card: seeding the daisycola image with the factory card, import/export commands [daisycola 2] | Format, seed and read-back test passes |
+| ☑ | 2 | Virtual SD card: seeding the daisycola image with the factory card, import/export commands [daisycola 2] | Format, seed and read-back test passes |
 | ☐ | 3 | CHOMPI board model on top of daisycola: key and encoder wiring, battery charger, LED layout; no threading yet [daisycola 3] | Unit tests pass, using the firmware's own encoder and LED code |
 | ☐ | 4 | Firmware running on daisycola's virtual MCU, plus the headless runner [daisycola 4] | Recorded-output tests pass (boot, playing keys, encoders, presets) and sanitizers are clean |
 | ☐ | 5 | DPF app with audio and MIDI only, and a rough placeholder screen | A MIDI controller plays it through JACK with no audio dropouts |
@@ -148,6 +151,27 @@ CHAMPI/
 - **Done when:** unit tests pass for key presses through `SwId`, an encoder turn through
   `PanelState`, a decoded LED frame landing in the right `LedFrame` slots, and the MP2722 lockout
   check. daisycola's own `ChompiEncoder` and `fill_led_data` tests aren't repeated.
+- As built: `champi_board` holds `core/panel_state`, `core/mp2722` and `core/led_frame`.
+  - `PanelState` numbers keys and encoders as printed on the board (KEY1-28, ENC1-6) and keeps no
+    state of its own: the levels live in daisycola, so any host thread can set or read them.
+    `Attach` wires everything once per process (daisycola can't re-wire a chain). At rest every
+    key is up, the toggle is on (what `GetToggleState` reports as true; the firmware only lights
+    the encoder LEDs and opens the shift menu then) and the line-in jack is empty.
+  - `Mp2722` computes VIN_GD, CHG_STAT and BATT_LOW_STAT from a power state the host sets (USB
+    power, battery millivolts, charge done) and stores every other register. The BATT_LOW
+    threshold is read from register 0x0C bits 3:2. TAPE's two values give 0b00 = 3.0 V and
+    0b11 = 3.3 V; the steps between are assumed to be 100 mV. By default it's on USB with a full
+    battery. A UI battery-level control maps onto these setters later.
+  - `ReadLedFrame` decodes both chains into `LedFrame`: `key[0..27]` (KEY26-28 are PTH LEDs) and
+    `encoder[0..5]`, plus `encoder5_second` for ENC5's other LED. The maps come from TAPE's
+    `led_map`. The firmware's /4 and /11 scaling stays in, for chunk 6 to undo.
+  - The tests (`tests/board_test.cpp`) drive TAPE's own `chompi::Hardware`: its real `Init`,
+    `ProcessAllControls`, `SwId` names, `MpReadAll`, `BMCMediumBattCheck` and
+    `LowBatteryLockoutCheck`, plus TAPE's LED driver. They run single-threaded on the manual
+    clock. They check against the firmware's own enum names and a verbatim copy of `led_map`,
+    not against CHAMPI's tables.
+  - Writing them turned up the daisycola I2C ordering bug above. It was fixed there, not worked
+    around here.
 
 ### 4. Firmware on the virtual MCU, plus headless runner (milestone 1) [daisycola phase 4]
 - daisycola: done. The firmware thread, signal-based interrupts in NVIC priority order,
