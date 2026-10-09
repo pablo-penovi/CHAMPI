@@ -154,7 +154,7 @@ The firmware assumes interrupts preempt the main loop in a fixed priority order.
 
 ### 5. Build and dependencies
 - CMake ≥ 3.20.
-- DPF (submodule) with `dpf_add_plugin(... TARGETS jack)`. DPF's standalone falls back to native ALSA/PulseAudio/SDL when JACK is absent; PipeWire-JACK is present on this machine.
+- DPF (submodule, pinned to a `main` commit because DPF has no release tags) with `dpf_add_plugin(... TARGETS jack)`. DPF's standalone falls back to native ALSA/PulseAudio/SDL when JACK is absent; PipeWire-JACK is present on this machine.
 - Libraries: libsamplerate and alsa (seq).
 - Targets: `champi` (app), `champi-headless`, `champi-tests`.
 - A `CHOMPI_FIRMWARE=tape|tempo|wave` option selects which firmware sources to compile and which shim variant to use.
@@ -181,7 +181,7 @@ Milestones 1–3 are done on the daisycola side; the CHAMPI side is chunks 1–4
   - Turn encoder 0 and check the pitch changes.
   - Press play, loop, record and check the looper output.
   - Write a preset in the shift menu, restart (a second process on the same image), and check `presets.json` changed in the image.
-- **Sanitizers:** run the headless suite under `-fsanitize=thread` and `address` (the ASan build sets `protect_shadow_gap=0`).
+- **Sanitizers:** run the headless suite under `-fsanitize=thread` and `address` (the ASan build sets `protect_shadow_gap=0`). CHAMPI must set the flags for its own targets as well as passing them to daisycola, because daisycola's flags only cover its own directory.
 - **Manual:**
   - Run `champi`. Check the panel matches the reference and the boot rainbow plays.
   - Play from the keyboard and mouse.

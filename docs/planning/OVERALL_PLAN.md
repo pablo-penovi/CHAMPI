@@ -85,22 +85,26 @@ CHAMPI/
 
 ### 0. Repo skeleton
 - Add the submodules: CHOMPI pinned to `a73d732`, daisycola pinned to `e9ab6a0`, and DPF pinned
-  to a release tag.
+  to `4238e1c` on `main` (DPF has no release tags).
 - Add a top-level CMake file with the `CHOMPI_FIRMWARE=tape` option, gnu++17, and warnings set
-  low for the firmware sources only. Point daisycola's `DAISYCOLA_CHOMPI_DIR` at
-  `third_party/CHOMPI` (it derives the TAPE libDaisy fork from it), and turn
-  `DAISYCOLA_BUILD_TESTS` off.
+  low for the firmware sources only (`champi_firmware_flags`, `-w`; CHAMPI's own code links
+  `champi_warnings`). Point daisycola's `DAISYCOLA_CHOMPI_DIR` at `third_party/CHOMPI` (it
+  derives the TAPE libDaisy fork from it), and turn `DAISYCOLA_BUILD_TESTS` off. DPF is added with
+  `DPF_LIBRARIES` and `DPF_EXAMPLES` off: it only provides `dpf_add_plugin()`, which builds the
+  DGL library a plugin needs.
 - Add the README (what this is, the trademark note, how to build), `.gitignore`, and an MIT
   LICENSE with credit to the CHOMPI Club code.
 - **Done when:** `cmake -B build && cmake --build build` runs an empty build, and the repo is
-  pushed to GitHub.
+  pushed to GitHub. The "empty" build already compiles `libdaisycola.a`, which checks the CHOMPI
+  path.
 
 ### 1. Compile and link TAPE against daisycola [daisycola phase 1: done]
 - daisycola: done. Its `tests/tape/CMakeLists.txt` already builds TAPE this way and its
   `tape_link` test passes.
 - CHAMPI: build `core/firmware_tape` the same way: DaisySP as its own library;
   `chompi_main.cpp`, `encoder.cpp`, `FileStreamingManager.cpp` and `core_json.c` with
-  `-Dmain=chompi_fw_main` and `-w`; linked to daisycola. daisycola's include directories must come
+  `-Dmain=chompi_fw_main`, both linking `champi_firmware_flags` privately for `-w`; linked to
+  daisycola. daisycola's include directories must come
   before DaisySP's (it carries a `DelayLine` fix).
 - **Done when:** `libchampi_fw_tape.a` links into a test binary that references
   `chompi_fw_main`, with no undefined symbols.
@@ -139,6 +143,10 @@ CHAMPI/
   runner builds the LED log itself from `GetDmaFrame`.
 - A firmware runs once per process, so the preset-survives-restart test runs two processes on one
   image.
+- Add a `CHAMPI_SANITIZER` option (thread, address or empty) that sets the sanitizer flags for
+  CHAMPI's targets and passes the same value to `DAISYCOLA_SANITIZER`. daisycola sets its flags
+  with `add_compile_options`, which only reaches its own directory, so CHAMPI's targets (and the
+  firmware sources) aren't instrumented unless CHAMPI adds the flags too.
 - CHAMPI's ASan build defines `__asan_default_options` with `protect_shadow_gap=0`. Decide then
   whether daisycola should ship that as an opt-in `daisycola::asan_sdram` target instead.
 - Feed back into daisycola anything `host.h` turned out to lack or get wrong; that closes daisycola
@@ -148,6 +156,8 @@ CHAMPI/
   restart), and the suite is clean under TSan and ASan.
 
 ### 5. DPF app: audio and MIDI only
+- DPF's CMake is already loaded (chunk 0). `dpf_add_plugin(champi TARGETS jack ...)` builds
+  `dgl-opengl` itself; the default OpenGL UI type needs the OpenGL and X11 development packages.
 - The `ChompiPlugin` standalone JACK target, with 3 inputs and 4 outputs, and auto-connect for
   master out. Audio runs on daisycola's host clock: `run()` calls `ProcessAudio`, which adds two
   24-frame blocks (1 ms) of latency.
@@ -191,6 +201,8 @@ CHAMPI/
 ## Working agreement
 
 - Firmware comes from an upstream submodule (`CHOMPI-Club/CHOMPI` @ `a73d732`) and is never patched.
+- The public submodules (CHOMPI, DPF) use HTTPS URLs; daisycola uses SSH because it's private.
+  DPF has no release tags, so its pin is a `main` commit, moved forward only in a chunk PR.
 - The product name is `champi`: binaries `champi` and `champi-headless`, config in `~/.config/champi`, data in `~/.local/share/champi`. (The detailed plan first said `chompi-linux`.)
 - The GitHub repo `pablo-penovi/CHAMPI` is private.
 - The libDaisy replacement lives in `pablo-penovi/daisycola` (private), not here. Generic Daisy
