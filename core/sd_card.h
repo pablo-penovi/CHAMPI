@@ -15,7 +15,8 @@ constexpr uint64_t kSdImageSize = uint64_t(4) << 30;
 /** $XDG_DATA_HOME/champi/sdcard.img, or ~/.local/share/champi/sdcard.img. */
 std::filesystem::path DefaultSdImagePath();
 
-/** The factory card profile for the firmware this build runs (card-profiles/tape-2.0). */
+/** The factory card profile for the firmware this build runs: card-profiles/tape-2.0 next to the
+ *  executable if it's there, as in a release, else the one in the CHOMPI checkout. */
 std::filesystem::path FactoryCardDir();
 
 /**

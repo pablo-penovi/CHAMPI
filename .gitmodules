@@ -3,7 +3,7 @@
 	url = https://github.com/CHOMPI-Club/CHOMPI.git
 [submodule "third_party/daisycola"]
 	path = third_party/daisycola
-	url = git@github.com:pablo-penovi/daisycola.git
+	url = https://github.com/pablo-penovi/daisycola.git
 [submodule "third_party/DPF"]
 	path = third_party/DPF
 	url = https://github.com/DISTRHO/DPF.git

@@ -32,10 +32,34 @@ recording, the shift menus, presets, options and the factory test.
 TEMPO and WAVE, CHOMPI's other two firmwares, may follow. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
+## Downloading a release
+
+Each [release](https://github.com/pablo-penovi/CHAMPI/releases) has a Linux x86_64 tarball. Unpack
+it and run `./champi` from the folder; keep `card-profiles/` next to the executable, since new SD
+cards are seeded from it.
+
+**Requirements.** The release needs glibc 2.41 or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch
+and later), and these libraries installed, which it doesn't bundle:
+
+| Library | Arch | Debian / Ubuntu | Fedora |
+| --- | --- | --- | --- |
+| libjack: JACK, or PipeWire's JACK | `pipewire-jack` or `jack2` | `pipewire-jack` or `libjack-jackd2-0` | `pipewire-jack-audio-connection-kit` or `jack-audio-connection-kit` |
+| libsamplerate | `libsamplerate` | `libsamplerate0` | `libsamplerate` |
+| OpenGL | `libglvnd` | `libgl1` | `libglvnd-glx` |
+| X11 and D-Bus, for the window | `libx11`, `libxcursor`, `libxext`, `libxrandr`, `dbus` | `libx11-6`, `libxcursor1`, `libxext6`, `libxrandr2`, `libdbus-1-3` | `libX11`, `libXcursor`, `libXext`, `libXrandr`, `dbus-libs` |
+
+A desktop with PipeWire usually has them all already. The release has no native-audio fallback,
+so it needs a JACK server or PipeWire running. A missing library shows as `error while loading
+shared libraries: <name>`.
+
+Releases are made by CI: when a push to `main` brings a `VERSION.md` (just a version such as
+`v1.2.0`) newer than every release and `v*` tag, the Release workflow builds with GCC 16, runs the
+tests, and publishes the tarball under that tag. To release, bump `VERSION.md`.
+
 ## Building
 
-You need gcc, CMake 3.20 or newer, access to the private daisycola repo, and the development
-packages for JACK, libsamplerate, OpenGL and X11. The build compiles the TAPE firmware and builds
+You need gcc, CMake 3.20 or newer, and the development packages for JACK, libsamplerate, OpenGL and
+X11. The build compiles the TAPE firmware and builds
 `champi` and `champi-headless`.
 
 ```sh

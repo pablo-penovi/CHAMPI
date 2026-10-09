@@ -37,7 +37,18 @@ fs::path DefaultSdImagePath()
 
 fs::path FactoryCardDir()
 {
-    return CHAMPI_FACTORY_CARD_DIR;
+    // A release ships the profile in card-profiles/ next to the executable; a build from source
+    // uses the checkout's.
+    const fs::path source = CHAMPI_FACTORY_CARD_DIR;
+    std::error_code ec;
+    const fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if(!ec)
+    {
+        const fs::path shipped = exe.parent_path() / "card-profiles" / source.filename();
+        if(fs::is_directory(shipped, ec))
+            return shipped;
+    }
+    return source;
 }
 
 void CreateCard(const fs::path& image, const fs::path& card_dir, uint64_t size)
