@@ -45,7 +45,7 @@ Tick a chunk's box when its PR is merged into `main`.
 
 | Done | # | Chunk | Done when |
 |:---:|---|---|---|
-| ☐ | 0 | Repo skeleton: the CHOMPI, daisycola and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
+| ☑ | 0 | Repo skeleton: the CHOMPI, daisycola and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
 | ☐ | 1 | The real TAPE firmware sources compile and link against daisycola's stubs [daisycola 1] | No missing pieces at link time |
 | ☐ | 2 | Virtual SD card: seeding the daisycola image with the factory card, import/export commands [daisycola 2] | Format, seed and read-back test passes |
 | ☐ | 3 | CHOMPI board model on top of daisycola: key and encoder wiring, battery charger, LED layout; no threading yet [daisycola 3] | Unit tests pass, using the firmware's own encoder and LED code |
@@ -108,6 +108,11 @@ CHAMPI/
   before DaisySP's (it carries a `DelayLine` fix).
 - **Done when:** `libchampi_fw_tape.a` links into a test binary that references
   `chompi_fw_main`, with no undefined symbols.
+- As built: `core/CMakeLists.txt` defines `champi_daisysp` and `champi_fw_tape`, both compiled with
+  `-w` through `champi_firmware_flags`. `champi_fw_tape` links daisycola before `champi_daisysp`
+  publicly, so anything that links the firmware gets the right include order. The link test is
+  `tests/fw_tape_link.cpp` (ctest `champi_fw_tape_link`), a plain program like daisycola's
+  `tape_link`. GoogleTest comes in with chunk 2, the first chunk with real unit tests.
 
 ### 2. Virtual SD card [daisycola phase 2]
 - daisycola: done. `SdCreateImage` (MBR plus one FAT32 partition), `SdOpenImage`, `SdList`,
