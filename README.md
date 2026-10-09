@@ -10,7 +10,8 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 ## Status
 
-Early work: the TAPE firmware compiles and links against daisycola, but nothing runs yet. The work
+Early work: the TAPE firmware compiles and links against daisycola, and the virtual SD card works,
+but the firmware doesn't run yet. The work
 is split into chunks, each ending in something that builds and has tests. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
@@ -43,7 +44,8 @@ docs/                  design and planning documents
 ## Building
 
 You need gcc, CMake 3.20 or newer, and access to the private daisycola repo. For now the build
-compiles the TAPE firmware into `libchampi_fw_tape.a` and links it into a test program.
+compiles the TAPE firmware into `libchampi_fw_tape.a` and builds `champi-headless`, which can only
+manage the SD card so far.
 
 ```sh
 git clone --recurse-submodules git@github.com:pablo-penovi/CHAMPI.git
@@ -54,6 +56,21 @@ cmake --build build
 
 In an existing clone, run `git submodule update --init --recursive` first. Run the tests with
 `ctest --test-dir build`.
+
+## SD card
+
+The virtual SD card is a 4 GB sparse disk image at `~/.local/share/champi/sdcard.img` (or under
+`$XDG_DATA_HOME`). It's created on first use and seeded with the factory TAPE card from
+`third_party/CHOMPI/firmware/card-profiles/tape-2.0`.
+
+```sh
+build/tools/champi-headless --sd-import ~/samples   # copy a directory's contents to the card root
+build/tools/champi-headless --sd-export ~/card      # copy the whole card out
+build/tools/champi-headless --sd-reset              # start again from the factory card
+```
+
+`--sd-image <file>` uses another image. The image is an MBR disk with one FAT32 partition, so it
+can also be loop-mounted or used with mtools.
 
 ## Documentation
 
