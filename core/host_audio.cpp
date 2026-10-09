@@ -70,6 +70,7 @@ void HostAudio::Prepare(double host_rate, size_t max_frames)
     host_rate_  = host_rate;
     max_frames_ = max_frames;
     primed_     = false;
+    scaled_.assign(kHostInputs * max_frames, 0.f);
     if(host_rate == kFirmwareRate)
         return;
 
@@ -99,13 +100,15 @@ void HostAudio::Run(const float* const* in, float* const* out, size_t frames)
 {
     const auto start = std::chrono::steady_clock::now();
 
+    const float* gained[kHostInputs] = {};
+    if(in)
+        ApplyGains(in, gained, frames);
     if(Resampling())
-        RunResampled(in, out, frames);
+        RunResampled(gained, out, frames);
     else
     {
         // The firmware's channel order: mic, unused, line L, line R in; phones, master out.
-        const float* fw_in[kFwChannels]  = {in ? in[0] : nullptr, nullptr, in ? in[1] : nullptr,
-                                            in ? in[2] : nullptr};
+        const float* fw_in[kFwChannels]  = {gained[0], nullptr, gained[1], gained[2]};
         float*       fw_out[kFwChannels] = {out[2], out[3], out[0], out[1]};
         const bool   ok                  = process_(fw_in, fw_out, frames);
         if(ok)
@@ -124,6 +127,21 @@ void HostAudio::Run(const float* const* in, float* const* out, size_t frames)
     }
 }
 
+void HostAudio::ApplyGains(const float* const* in, const float** gained, size_t frames)
+{
+    for(size_t c = 0; c < kHostInputs; c++)
+    {
+        gained[c]        = in[c];
+        const float gain = gains_[c].load(std::memory_order_relaxed);
+        if(!in[c] || gain == 1.f || frames > max_frames_) // more than Prepare said: no room
+            continue;
+        float* scaled = scaled_.data() + c * max_frames_;
+        for(size_t i = 0; i < frames; i++)
+            scaled[i] = in[c][i] * gain;
+        gained[c] = scaled;
+    }
+}
+
 void HostAudio::RunResampled(const float* const* in, float* const* out, size_t host_frames)
 {
     const size_t frames = std::min(host_frames, max_frames_);
@@ -131,7 +149,7 @@ void HostAudio::RunResampled(const float* const* in, float* const* out, size_t h
     // Host input to 48 kHz.
     for(size_t i = 0; i < frames; i++)
         for(size_t c = 0; c < kHostInputs; c++)
-            host_in_[i * kHostInputs + c] = in && in[c] ? in[c][i] : 0.f;
+            host_in_[i * kHostInputs + c] = in[c] ? in[c][i] : 0.f;
     const size_t n = Convert(in_src_, kFirmwareRate / host_rate_, host_in_.data(), frames,
                              fw_in_.data(), fw_cap_);
 

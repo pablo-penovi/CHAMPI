@@ -98,7 +98,7 @@ The panel is laid out from the CHOMPI's own board files. Everything on it works 
   2 mm drag or one wheel step is one detent; turned fast, each counts for up to four. Click to push
   an encoder; hold the button still for a moment to keep it pushed, then drag to turn it while
   pushed.
-- **The toggle switch**: click to flip it (lever up is on). Off is TAPE's record mode.
+- **The toggle switch**: click to flip it: lever up is record mode (off), down is playback (on).
 - **Line in** (the jack at the right edge): click to plug or unplug a cable. Without a plug, TAPE
   records from the mic.
 - **USB** (the socket at the front, bottom left): click to plug or unplug USB power. Scroll over it
@@ -168,8 +168,14 @@ connects L to L and R to R, and a mono port gets both sides. To route each side 
 split already.
 
 Mouse: click a row to open it, click a port to tick it, `< Back` to go back, and scroll a long
-list. Keys: arrows to move, `Enter` or `Space` to open or tick, `Page Up`/`Page Down`, `Esc` (or
-`Backspace`) to go back a level.
+list. Keys: arrows to move, `Tab` to switch columns, `Enter` or `Space` to open or tick, `Page
+Up`/`Page Down`, `Esc` (or `Backspace`) to go back a level.
+
+**Input volume.** With the mic or line in selected, a volume bar shows on the right of its row:
+`Left` and `Right` turn it down and up in 5% steps, or click on the bar to set it. 100% passes the
+input as it is; volumes follow a cubic curve, as PipeWire's do, so 50% is about -18 dB. A split
+line in has a volume per side. The volumes are saved to `~/.config/champi/input_levels.toml`
+(`mic = 60` and so on) and applied at the next start.
 
 The menu's changes are saved to `~/.config/champi/connections.toml`, and restored at the next
 start and whenever a saved port appears, so a USB interface or controller plugged in later gets
@@ -223,9 +229,9 @@ play the selected sample chromatically: KEY8 at its own pitch, KEY1 an octave do
 leftmost knob, is the speed; ENC1–3 and ENC6 set the rest, and pushing one switches it to its
 second page. The LEDs above the knobs show their values.
 
-**Recording a sample.** Flip the toggle off (record mode), then hold the CHOMPI key: TAPE records
+**Recording a sample.** Flip the toggle up (record mode), then hold the CHOMPI key: TAPE records
 from line in if a cable is plugged in, or from the mic. Its LED is red while it records. Let go,
-flip the toggle back on, and the keys play the recording. With "Record Latch" on in `options.json`,
+flip the toggle back down, and the keys play the recording. With "Record Latch" on in `options.json`,
 one tap starts recording and the next stops it.
 
 **The looper.** Press loop to start recording a loop and play over it. Press loop again to close

@@ -13,6 +13,8 @@ START_NAMESPACE_DISTRHO
 
 ChampiPlugin::ChampiPlugin() : Plugin(0, 0, 0), audio_(daisycola::ProcessAudio)
 {
+    for(int i = 0; i < champi::InputLevels::kInputs; i++)
+        audio_.SetInputGain(size_t(i), champi::InputLevels::Gain(champi::Options().input_levels.percent[i]));
     try
     {
         // In test mode ENC6 starts pushed; the UI lets go of it once the firmware has booted.

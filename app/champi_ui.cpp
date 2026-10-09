@@ -114,6 +114,7 @@ class ChampiUI : public UI
         // X11 repeats a held key as a release and a press, which would retrigger it. KeyboardControl
         // repeats the turn keys itself.
         getWindow().setIgnoringKeyRepeat(true);
+        menu_.SetLevels(champi::Options().input_levels);
     }
 
   protected:
@@ -199,11 +200,12 @@ class ChampiUI : public UI
             return false;
         if(menu_open_)
         {
-            if(ev.press)
+            if(ev.press && MenuReady())
             {
                 float x, y;
                 Fit().ToPanel(ev.pos, x, y);
                 Send(menu_.Click(x, y));
+                ApplyLevels();
             }
             return true;
         }
@@ -253,7 +255,10 @@ class ChampiUI : public UI
         if(menu_open_)
         {
             if(ev.press)
+            {
                 MenuKey(code);
+                ApplyLevels();
+            }
             return true;
         }
         if(ev.press)
@@ -299,14 +304,20 @@ class ChampiUI : public UI
 
     void CloseMenu() { menu_open_ = false; }
 
+    // Whether the menu lists CHAMPI's ports, rather than a message.
+    bool MenuReady() const { return champi::Options().routing && routing_ready_; }
+
     void MenuKey(champi::Scancode code)
     {
+        if(!MenuReady() && code != KEY_ESC && code != KEY_BACKSPACE)
+            return;
         switch(code)
         {
             case KEY_UP: menu_.Move(0, -1); break;
             case KEY_DOWN: menu_.Move(0, 1); break;
             case KEY_LEFT: menu_.Move(-1, 0); break;
             case KEY_RIGHT: menu_.Move(1, 0); break;
+            case KEY_TAB: menu_.SwitchColumn(); break;
             case KEY_PAGEUP: menu_.Page(-1); break;
             case KEY_PAGEDOWN: menu_.Page(1); break;
             case KEY_ENTER:
@@ -318,6 +329,28 @@ class ChampiUI : public UI
                     CloseMenu();
                 break;
             default: break;
+        }
+    }
+
+    // Sets the gains of inputs whose volume the menu changed, and saves them.
+    void ApplyLevels()
+    {
+        champi::InputLevels& levels = champi::Options().input_levels;
+        if(menu_.Levels() == levels)
+            return;
+        levels = menu_.Levels();
+        for(int i = 0; i < champi::InputLevels::kInputs; i++)
+            Plugin().SetInputGain(size_t(i), champi::InputLevels::Gain(levels.percent[i]));
+        const auto& path = champi::Options().input_levels_path;
+        if(path.empty())
+            return;
+        try
+        {
+            levels.Save(path);
+        }
+        catch(const std::exception& e)
+        {
+            std::fprintf(stderr, "champi: can't save the input volumes: %s\n", e.what());
         }
     }
 
@@ -1090,8 +1123,8 @@ class ChampiUI : public UI
         roundedRect(s.x, s.y, s.w, s.h, 0.8f);
         fillColor(Color(4, 4, 4));
         fill();
-        // The lever: up is on.
-        const float lh = s.h * 0.48f, ly = on ? s.y + 0.4f : s.y + s.h - lh - 0.4f;
+        // The lever: up is off, TAPE's record mode; down is on, playback.
+        const float lh = s.h * 0.48f, ly = on ? s.y + s.h - lh - 0.4f : s.y + 0.4f;
         beginPath();
         roundedRect(s.x + 0.6f, ly, s.w - 1.2f, lh, 0.6f);
         fillPaint(linearGradient(0, ly, 0, ly + lh, Color(236, 236, 232), Color(140, 140, 136)));
@@ -1239,16 +1272,18 @@ class ChampiUI : public UI
         text(b.x + Menu::kPad, Menu::kTitleY, "Connections", nullptr);
 
         const std::string close = MenuKeyName() + " or Esc closes";
-        const char* hint = !champi::Options().routing || !routing_ready_ ? close.c_str()
+        const char* hint = !MenuReady() ? close.c_str()
                            : menu_.InPeers() ? "Enter or Space ticks    Esc goes back"
                                              : nullptr;
-        const std::string first = "Enter opens a port    " + close;
+        const bool        level = !menu_.InPeers() && Menu::HasLevel(menu_.OpenRow());
+        const std::string first = std::string(level ? "Left/Right sets the volume    Tab switches column    " : "")
+                                  + "Enter opens a port    " + close;
         fontSize(2.8f);
         textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
         fillColor(kStatusText);
         text(b.x + b.w - Menu::kPad, Menu::kTitleY, hint ? hint : first.c_str(), nullptr);
 
-        if(!champi::Options().routing || !routing_ready_)
+        if(!MenuReady())
         {
             fontSize(3.4f);
             textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
@@ -1307,7 +1342,9 @@ class ChampiUI : public UI
                 if(row.missing)
                     summary += "    (" + std::to_string(row.missing) + " saved, not present)";
 
-                scissor(rr.x, rr.y, rr.w - 1.5f, rr.h);
+                const bool         level = selected && Menu::HasLevel(row);
+                const layout::Rect bar   = Menu::LevelRect(c, r);
+                scissor(rr.x, rr.y, (level ? bar.x - 3 : rr.x + rr.w - 1.5f) - rr.x, rr.h);
                 fontSize(3.6f);
                 textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
                 fillColor(kCream);
@@ -1316,7 +1353,33 @@ class ChampiUI : public UI
                 fillColor(row.connected.empty() ? kMenuMissing : kStatusText);
                 text(rr.x + 3, rr.y + 9.4f, summary.c_str(), nullptr);
                 resetScissor();
+                if(level)
+                    DrawLevel(bar, menu_.RowLevel(row));
             }
+        }
+    }
+
+    // A volume bar with its figure above it.
+    void DrawLevel(const layout::Rect& bar, int percent)
+    {
+        const std::string figure = "Volume " + std::to_string(percent) + "%";
+        fontSize(2.7f);
+        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
+        fillColor(kStatusText);
+        text(bar.x + bar.w, bar.y - 3.8f, figure.c_str(), nullptr);
+        beginPath();
+        roundedRect(bar.x, bar.y, bar.w, bar.h, bar.h / 2);
+        fillColor(Color(18, 18, 20));
+        fill();
+        strokeColor(kStatusText);
+        strokeWidth(0.25f);
+        stroke();
+        if(percent > 0)
+        {
+            beginPath();
+            roundedRect(bar.x, bar.y, bar.w * percent / champi::InputLevels::kMax, bar.h, bar.h / 2);
+            fillColor(kGold);
+            fill();
         }
     }
 

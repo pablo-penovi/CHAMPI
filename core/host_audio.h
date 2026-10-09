@@ -6,7 +6,7 @@
 //
 // Host inputs are mic, line L and line R; the firmware sees them as its inputs 1, 3 and 4 (its
 // input 2 is unused). Host outputs are master L/R and phones L/R, which are the firmware's
-// outputs 3/4 and 1/2.
+// outputs 3/4 and 1/2. Each host input has a gain, applied before the firmware sees it.
 #pragma once
 
 #include <atomic>
@@ -45,6 +45,9 @@ class HostAudio
     /** Sets the host's rate and largest buffer. Allocates, so not from the audio thread. */
     void Prepare(double host_rate, size_t max_frames);
 
+    /** Sets host input `input`'s gain, 1 by default. Any thread. */
+    void SetInputGain(size_t input, float gain) { gains_[input].store(gain, std::memory_order_relaxed); }
+
     /** True if the host rate isn't 48 kHz. */
     bool Resampling() const { return in_src_ != nullptr; }
 
@@ -57,12 +60,17 @@ class HostAudio
 
   private:
     void RunResampled(const float* const* in, float* const* out, size_t host_frames);
+    /** Points `gained` at the inputs with their gains applied, in scaled_ where a gain isn't 1. */
+    void ApplyGains(const float* const* in, const float** gained, size_t frames);
     void Release();
 
     Process process_;
     double  host_rate_  = kFirmwareRate;
     size_t  max_frames_ = 0;
     bool    ever_ok_    = false;
+
+    std::atomic<float> gains_[kHostInputs] = {1.f, 1.f, 1.f};
+    std::vector<float> scaled_; // planar, kHostInputs of max_frames_
 
     // Rate conversion: host inputs to 48 kHz, firmware outputs back to the host rate.
     SRC_STATE*         in_src_  = nullptr;
