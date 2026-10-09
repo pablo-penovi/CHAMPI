@@ -10,8 +10,9 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 ## Status
 
-Planning stage: no code yet. The work is split into chunks, each ending in something that builds
-and has tests. Progress is tracked in [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
+Early work: the repo skeleton is in place (submodules and CMake), but nothing runs yet. The work
+is split into chunks, each ending in something that builds and has tests. Progress is tracked in
+[docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
 ## Planned features
 
@@ -29,19 +30,20 @@ and has tests. Progress is tracked in [docs/planning/OVERALL_PLAN.md](docs/plann
 ## Planned layout
 
 ```
-third_party/CHOMPI/  submodule: CHOMPI firmware, card profiles and board files (never patched)
-third_party/DPF/     submodule: DISTRHO Plugin Framework
-host-daisy/          host replacement for libDaisy's hardware layer
-core/                virtual hardware, firmware build and runtime
-app/                 DPF app and panel UI
-tools/               champi-headless, panel layout extractor
+third_party/CHOMPI/    submodule: CHOMPI firmware, card profiles and board files (never patched)
+third_party/daisycola/ submodule: libDaisy replacement and virtual MCU
+third_party/DPF/       submodule: DISTRHO Plugin Framework
+core/                  firmware build, CHOMPI board model, runtime glue
+app/                   DPF app and panel UI
+tools/                 champi-headless, panel layout extractor
 tests/
-docs/                design and planning documents
+docs/                  design and planning documents
 ```
 
 ## Building
 
-Not buildable yet. Once the skeleton is in place, the build will be:
+You need gcc, CMake 3.20 or newer, and access to the private daisycola repo. For now the build
+only compiles daisycola against the TAPE libDaisy fork.
 
 ```sh
 git clone --recurse-submodules git@github.com:pablo-penovi/CHAMPI.git
@@ -50,10 +52,17 @@ cmake -B build
 cmake --build build
 ```
 
+In an existing clone, run `git submodule update --init --recursive` first.
+
 ## Documentation
 
 - [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md): the implementation plan, split into chunks, with progress.
 - [docs/planning/DETAILED_OVERALL_PLAN.md](docs/planning/DETAILED_OVERALL_PLAN.md): the detailed design.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). The CHOMPI firmware in `third_party/CHOMPI` is MIT-licensed by CHOMPI
+Club.
 
 ## Trademarks
 

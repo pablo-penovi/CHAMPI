@@ -85,7 +85,7 @@ CHAMPI/
 
 ### 0. Repo skeleton
 - Add the submodules: CHOMPI pinned to `a73d732`, daisycola pinned to `e9ab6a0`, and DPF pinned
-  to a release tag.
+  to `4238e1c` on `main` (DPF has no release tags).
 - Add a top-level CMake file with the `CHOMPI_FIRMWARE=tape` option, gnu++17, and warnings set
   low for the firmware sources only. Point daisycola's `DAISYCOLA_CHOMPI_DIR` at
   `third_party/CHOMPI` (it derives the TAPE libDaisy fork from it), and turn
