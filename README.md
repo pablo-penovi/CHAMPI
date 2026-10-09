@@ -13,6 +13,12 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 and MIDI. Everything TAPE does, it does here because it's the same code: the sampler, the looper,
 recording, the shift menus, presets, options and the factory test.
 
+## FULL DISCLOSURE
+
+This is a fully vibe coded app. My goal was to get a functional, complete, native Linux virtual [CHOMPI](https://github.com/CHOMPI-Club/CHOMPI),
+not the most efficient, good or secure version of it. I have not reviewed the code. This is provided
+as-is and I make no promises concerning quality or security.
+
 ## Features
 
 - **The real TAPE 2.0 firmware**, built from the CHOMPI sources without a single patch, running on
