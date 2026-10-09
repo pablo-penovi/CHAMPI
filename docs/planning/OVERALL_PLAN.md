@@ -292,6 +292,50 @@ CHAMPI/
 - An optional user `skin/` folder; no art is committed.
 - **Done when:** the panel matches the reference side by side and is fully playable with the
   mouse.
+- As built:
+  - `tools/extract_panel_layout.py` (Python, standard library only) writes `app/panel_layout.h`,
+    which is committed. The ctest `champi_panel_layout_up_to_date` reruns it with `--check`, so the
+    header can't drift from the board files. Everything is in panel millimetres, origin top left,
+    y down: the panel is 326 × 106 mm.
+  - The top panel gives the outline, the key cut-outs, the shaft holes and the LED windows. The main
+    board gives what each one is: `KEYn`, `SWn` (= ENCn; ENC4 is the leftmost, the speed knob) and
+    `LED1`-`LED10`, whose left-to-right order is the PTH chain order in `led_frame.cpp`. The board
+    sits at (+2.615, +2.9) mm under the panel, fitted from the five small encoder shafts to within
+    0.02 mm. ENC5 and the jacks are on the lower board, at their own offset, fitted from ENC5 and
+    the scrub wheel's 35.5 mm hole.
+  - A key's centre is its switch's centre post (the footprint's 4.09 mm hole, mirrored by `MR0`),
+    not the socket's origin, which is 3.81 mm off. That puts every key in the middle of its
+    cut-out, and each SMT LED 5.05 mm straight above its key's centre.
+  - There are ten LED windows, not six: 8.4 mm ones over ENC1-4, ENC6 and the CHOMPI key, and
+    5.1 mm ones over play, loop and either side of the scrub wheel (ENC5's two LEDs).
+  - `app/panel.{h,cpp}` (`champi_panel`, no DPF) holds the sizes the board files don't give (18 mm
+    keycaps, knobs), hit-testing, the LED look and `MouseControl`. The UI only draws and forwards
+    events.
+  - LEDs: the firmware's /4 and /11 are undone, and the result is treated as linear light and
+    gamma-encoded (1/2.2) for the screen. It's added onto the LED's unlit colour, with a radial
+    glow. After boot TAPE lights KEY1, 8 and 15 a dim pink (`0f0509`), not the purple of the
+    reference render; the panel shows what the firmware sends.
+  - Mouse: keys play while held. Encoders turn with a vertical drag (2 mm a detent, up is
+    clockwise) or the wheel (fractional smooth-scroll steps add up). A click pushes for 80 ms;
+    holding still for 300 ms pushes until release, and a drag then turns it while pushed. The
+    toggle and line-in jack flip on a click. The board files don't say which way the toggle is on;
+    lever up is on here.
+  - The line-in and headphone jacks are on the side of the case, so they're drawn at the right
+    edge, level with the real ones. Clicking line in plugs or unplugs a cable.
+  - The look follows the reference render (black body, cream and gold outlines, gold-ringed white
+    knobs, purple scrub wheel, pink, cyan and yellow keys), with none of its art: the logo is
+    "CHAMPI" in DejaVu Sans, the CHOMPI key has a mushroom, and play and loop have plain glyphs.
+    The reference image isn't in the CHOMPI release; it was compared by eye from a local copy.
+  - Skin: `logo.png`, `chompi.png`, `play.png` and `loop.png` in `~/.config/champi/skin` (or
+    `$XDG_CONFIG_HOME`, or `--skin <dir>`), each optional. PNG only: NanoVG loads images through
+    stb_image and has no SVG loader.
+  - The window opens at 1141 × 392 (3.5 px/mm), keeps its aspect ratio and can shrink to half that.
+    The status line moved under the panel. Tiling window managers still get a letterboxed panel.
+  - Tests: `champi-panel-tests`, its own program because it attaches a `PanelState`, checks the
+    layout against the board's key pitch and rows, hit-testing, the LED light, and every mouse
+    gesture into a real `PanelState` on the manual clock. It passes under ASan and TSan.
+  - Still manual: playing it by mouse on a real desktop. Screenshots of the running app were
+    compared with the reference, but no clicks were injected.
 
 ### 7. Computer keyboard
 - Scancode mapping, with defaults from the detailed plan's §4.

@@ -4,6 +4,7 @@
 // options first: the SD-card commands run and exit, as in champi-headless; otherwise the card is
 // created if needed and the app starts on it.
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <stdexcept>
 #include <string>
@@ -26,12 +27,23 @@ AppOptions& Options()
 
 std::atomic<uint64_t> g_xruns{0};
 
+std::filesystem::path DefaultSkinDir()
+{
+    if(const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
+        return std::filesystem::path(xdg) / "champi/skin";
+    if(const char* home = std::getenv("HOME"); home && *home)
+        return std::filesystem::path(home) / ".config/champi/skin";
+    return {};
+}
+
 namespace
 {
 void PrintUsage()
 {
     std::printf("Usage: champi [options]\n\n"
-                "  --no-connect        don't connect master out and MIDI controllers\n\n"
+                "  --no-connect        don't connect master out and MIDI controllers\n"
+                "  --skin <dir>        panel art: logo.png, chompi.png, play.png, loop.png\n"
+                "                      (default ~/.config/champi/skin; each file is optional)\n\n"
                 "SD card (--sd-reset, --sd-import and --sd-export run and exit):\n%s",
                 kSdUsage);
 }
@@ -43,11 +55,13 @@ int main(int argc, char** argv)
     using namespace champi;
     std::vector<std::string> args(argv + 1, argv + argc);
     bool                     connect = true;
+    Options().skin_dir               = DefaultSkinDir();
     try
     {
         std::vector<std::string> rest;
-        for(const auto& arg : args)
+        for(size_t i = 0; i < args.size(); i++)
         {
+            const std::string& arg = args[i];
             if(arg == "-h" || arg == "--help")
             {
                 PrintUsage();
@@ -55,6 +69,12 @@ int main(int argc, char** argv)
             }
             if(arg == "--no-connect")
                 connect = false;
+            else if(arg == "--skin")
+            {
+                if(++i == args.size())
+                    throw std::invalid_argument("--skin needs a directory");
+                Options().skin_dir = args[i];
+            }
             else
                 rest.push_back(arg);
         }

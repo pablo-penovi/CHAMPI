@@ -20,5 +20,6 @@
 
 #define DISTRHO_UI_USE_NANOVG      1
 #define DISTRHO_UI_USER_RESIZABLE  1
-#define DISTRHO_UI_DEFAULT_WIDTH   960
-#define DISTRHO_UI_DEFAULT_HEIGHT  350
+// 3.5 px/mm: the 326 x 106 mm panel and the status line under it (see champi_ui.cpp).
+#define DISTRHO_UI_DEFAULT_WIDTH   1141
+#define DISTRHO_UI_DEFAULT_HEIGHT  392
