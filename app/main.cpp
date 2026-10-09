@@ -27,12 +27,12 @@ AppOptions& Options()
 
 std::atomic<uint64_t> g_xruns{0};
 
-std::filesystem::path DefaultSkinDir()
+std::filesystem::path ConfigDir()
 {
     if(const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
-        return std::filesystem::path(xdg) / "champi/skin";
+        return std::filesystem::path(xdg) / "champi";
     if(const char* home = std::getenv("HOME"); home && *home)
-        return std::filesystem::path(home) / ".config/champi/skin";
+        return std::filesystem::path(home) / ".config/champi";
     return {};
 }
 
@@ -43,7 +43,10 @@ void PrintUsage()
     std::printf("Usage: champi [options]\n\n"
                 "  --no-connect        don't connect master out and MIDI controllers\n"
                 "  --skin <dir>        panel art: logo.png, chompi.png, play.png, loop.png\n"
-                "                      (default ~/.config/champi/skin; each file is optional)\n\n"
+                "                      (default ~/.config/champi/skin; each file is optional)\n"
+                "  --keymap <file>     computer keys for the panel, over the defaults\n"
+                "                      (default ~/.config/champi/keymap.toml, if it exists)\n"
+                "  --print-keymap      print the keymap in use as keymap.toml, and exit\n\n"
                 "SD card (--sd-reset, --sd-import and --sd-export run and exit):\n%s",
                 kSdUsage);
 }
@@ -55,7 +58,11 @@ int main(int argc, char** argv)
     using namespace champi;
     std::vector<std::string> args(argv + 1, argv + argc);
     bool                     connect = true;
-    Options().skin_dir               = DefaultSkinDir();
+    const std::filesystem::path config = ConfigDir();
+    if(!config.empty())
+        Options().skin_dir = config / "skin";
+    std::filesystem::path keymap;
+    bool                  print_keymap = false;
     try
     {
         std::vector<std::string> rest;
@@ -75,10 +82,29 @@ int main(int argc, char** argv)
                     throw std::invalid_argument("--skin needs a directory");
                 Options().skin_dir = args[i];
             }
+            else if(arg == "--keymap")
+            {
+                if(++i == args.size())
+                    throw std::invalid_argument("--keymap needs a file");
+                keymap = args[i];
+            }
+            else if(arg == "--print-keymap")
+                print_keymap = true;
             else
                 rest.push_back(arg);
         }
         args = std::move(rest);
+
+        // A keymap given by name must exist; the default one only if it's there.
+        if(keymap.empty() && !config.empty() && std::filesystem::exists(config / "keymap.toml"))
+            keymap = config / "keymap.toml";
+        if(!keymap.empty())
+            Options().keymap.Load(keymap.string());
+        if(print_keymap)
+        {
+            std::fputs(Options().keymap.ToToml().c_str(), stdout);
+            return 0;
+        }
 
         const SdOptions sd = ParseSdOptions(args);
         RunSdCommands(sd);

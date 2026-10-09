@@ -5,16 +5,19 @@
 #include <cstdint>
 #include <filesystem>
 
+#include "keyboard.h"
+
 namespace champi
 {
 struct AppOptions
 {
     std::filesystem::path sd_image;
     std::filesystem::path skin_dir; // PNGs that replace the panel's logo and key glyphs
+    Keymap                keymap = Keymap::Defaults();
 };
 
-/** $XDG_CONFIG_HOME/champi/skin, or ~/.config/champi/skin; empty if neither is set. */
-std::filesystem::path DefaultSkinDir();
+/** $XDG_CONFIG_HOME/champi, or ~/.config/champi; empty if neither is set. */
+std::filesystem::path ConfigDir();
 
 /** The process's options, filled in by main before DPF starts. */
 AppOptions& Options();

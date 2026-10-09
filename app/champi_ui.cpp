@@ -1,5 +1,5 @@
 // The CHOMPI panel, drawn in vectors from the board files' layout (panel_layout.h) and played with
-// the mouse (MouseControl). The look follows the reference render: black body, cream and gold line
+// the mouse (MouseControl) and the computer keyboard (KeyboardControl). The look follows the reference render: black body, cream and gold line
 // art, white keys and knobs, the purple scrub wheel and the coloured CHOMPI, play and loop keys.
 //
 // Drawing is in panel millimetres; the panel is scaled to fit the window, with the status line
@@ -15,6 +15,7 @@
 #include "DistrhoUI.hpp"
 #include "app.h"
 #include "champi_plugin.h"
+#include "keyboard.h"
 #include "led_frame.h"
 #include "panel.h"
 #include "runtime.h"
@@ -91,10 +92,16 @@ struct Skin
 class ChampiUI : public UI
 {
   public:
-    ChampiUI() : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT), mouse_(champi::Runtime::Get().Panel())
+    ChampiUI()
+        : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT),
+          mouse_(champi::Runtime::Get().Panel()),
+          keyboard_(champi::Runtime::Get().Panel(), champi::Options().keymap)
     {
         loadSharedResources();
         setGeometryConstraints(DISTRHO_UI_DEFAULT_WIDTH / 2, DISTRHO_UI_DEFAULT_HEIGHT / 2, true);
+        // X11 repeats a held key as a release and a press, which would retrigger it. KeyboardControl
+        // repeats the turn keys itself.
+        getWindow().setIgnoringKeyRepeat(true);
     }
 
   protected:
@@ -104,6 +111,7 @@ class ChampiUI : public UI
     {
         champi::ReadLedFrame(leds_);
         mouse_.Tick(std::chrono::steady_clock::now());
+        keyboard_.Tick(std::chrono::steady_clock::now());
 
         // Load figures twice a second, so the peak covers half a second.
         const auto now = std::chrono::steady_clock::now();
@@ -174,6 +182,22 @@ class ChampiUI : public UI
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
         return mouse_.Scroll(x, y, float(ev.delta.getY()));
+    }
+
+    bool onKeyboard(const KeyboardEvent& ev) override
+    {
+        // On X11 a keycode is the evdev scancode plus 8: the physical key, whatever the layout.
+        const champi::Scancode code = champi::Scancode(ev.keycode) - 8;
+        if(ev.press)
+            return keyboard_.Press(code, std::chrono::steady_clock::now());
+        return keyboard_.Release(code);
+    }
+
+    // Keys held when the window loses focus never get their release.
+    void uiFocus(bool focus, CrossingMode) override
+    {
+        if(!focus)
+            keyboard_.ReleaseAll();
     }
 
   private:
@@ -457,8 +481,19 @@ class ChampiUI : public UI
         champi::PanelState&   panel  = champi::Runtime::Get().Panel();
         const layout::Circle  knob   = champi::Knob(e);
         const bool            pushed = panel.EncoderPushed(e);
-        const float           angle  = -kPi / 2 + 2 * kPi * mouse_.Turned(e) / champi::kDetentsPerTurn;
+        const int             turned = mouse_.Turned(e) + keyboard_.Turned(e);
+        const float           angle  = -kPi / 2 + 2 * kPi * turned / champi::kDetentsPerTurn;
         const float           x = knob.x, y = knob.y;
+
+        // The encoder the keyboard turns, once the keyboard has been used.
+        if(keyboard_.Used() && keyboard_.Selected() == e)
+        {
+            beginPath();
+            circle(x, y, (e == 5 ? layout::kEncoder[4].d : knob.d) / 2 + 1.2f);
+            strokeColor(kCream);
+            strokeWidth(0.5f);
+            stroke();
+        }
 
         if(e == 5)
         {
@@ -612,6 +647,7 @@ class ChampiUI : public UI
     }
 
     champi::MouseControl                  mouse_;
+    champi::KeyboardControl               keyboard_;
     champi::LedFrame                      leds_{};
     champi::AudioLoad                     load_{};
     std::chrono::steady_clock::time_point last_load_{};
