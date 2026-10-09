@@ -35,8 +35,13 @@ TEST(Script, ParsesEveryCommand)
                          "midi 90 3C 7f\n"
                          "usb off\n"
                          "battery 3100\n"
-                         "mark  KEY1   now\n");
-    ASSERT_EQ(c.size(), 14u);
+                         "mark  KEY1   now\n"
+                         "input line sine 440\n"
+                         "input mic sine 220.5 0.25\n"
+                         "input mic off\n"
+                         "sd out\n"
+                         "midiloop on\n");
+    ASSERT_EQ(c.size(), 19u);
     EXPECT_EQ(c[0].type, Type::kBoot);
     EXPECT_EQ(c[0].ms, 60000u);
     EXPECT_EQ(c[0].line, 2);
@@ -64,6 +69,19 @@ TEST(Script, ParsesEveryCommand)
     EXPECT_EQ(c[12].value, 3100);
     EXPECT_EQ(c[13].type, Type::kMark);
     EXPECT_EQ(c[13].text, "mark KEY1 now");
+    EXPECT_EQ(c[14].type, Type::kInput);
+    EXPECT_EQ(c[14].target, int(champi::Input::kLine));
+    EXPECT_EQ(c[14].hz, 440);
+    EXPECT_EQ(c[14].level, 0.5);
+    EXPECT_EQ(c[15].target, int(champi::Input::kMic));
+    EXPECT_EQ(c[15].hz, 220.5);
+    EXPECT_EQ(c[15].level, 0.25);
+    EXPECT_EQ(c[16].type, Type::kInput);
+    EXPECT_EQ(c[16].hz, 0);
+    EXPECT_EQ(c[17].type, Type::kSd);
+    EXPECT_EQ(c[17].value, 0);
+    EXPECT_EQ(c[18].type, Type::kMidiLoop);
+    EXPECT_EQ(c[18].value, 1);
 }
 
 TEST(Script, ParsesDurations)
@@ -83,6 +101,9 @@ TEST(Script, RejectsBadLinesWithTheirNumber)
         "push 7 down\n",   "turn 4\n",      "turn 4 x\n",   "toggle up\n",  "midi\n",
         "midi 100\n",      "midi zz\n",     "wait\n",       "wait 5\n",     "battery -1\n",
         "mark\n",          "boot 1s 2s\n",  "key 1x down\n",
+        "input\n",         "input aux sine 440\n", "input mic\n", "input mic sine\n",
+        "input mic sine 0\n", "input mic sine 440 2\n", "input mic off 1\n", "input mic saw 440\n",
+        "sd\n",            "sd up\n",       "midiloop in\n",
     };
     for(const char* line : bad)
     {

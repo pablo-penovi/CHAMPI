@@ -15,7 +15,9 @@ ChampiPlugin::ChampiPlugin() : Plugin(0, 0, 0), audio_(daisycola::ProcessAudio)
 {
     try
     {
-        champi::Runtime::Get().Start(champi::Options().sd_image, daisycola::AudioClock::kHost);
+        // In test mode ENC6 starts pushed; the UI lets go of it once the firmware has booted.
+        champi::Runtime::Get().Start(champi::Options().sd_image, daisycola::AudioClock::kHost,
+                                     champi::Options().test_mode);
     }
     catch(const std::exception& e)
     {

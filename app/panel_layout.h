@@ -81,6 +81,10 @@ constexpr Circle kEncoder5SecondLedWindow = {223.356f, 10.994f, 5.1f};
 constexpr Point kLineInJack = {316.885f, 42.393f};
 constexpr Point kPhonesJack = {316.885f, 63.893f};
 
+// The USB-C socket and the micro-SD slot, on the front edge (y past kHeight: they stick out).
+constexpr Point kUsbSocket = {25.562f, 107.504f};
+constexpr Point kSdSlot    = {253.527f, 110.871f};
+
 // The cut-out the white and black rows show through, corner by corner.
 constexpr Point kKeyboardCutout[40] = {
     {22.0f, 54.0f}, {22.5f, 53.5f}, {62.15f, 53.5f}, {62.65f, 54.0f},

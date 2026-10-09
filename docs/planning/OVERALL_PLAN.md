@@ -378,6 +378,56 @@ CHAMPI/
 - Simulated SD-card removal (`SdSetPresent`).
 - Encoder feel and acceleration tuning.
 - Write the full README.
+- As built:
+  - The flows are checked by golden tests in `champi-headless-tests`, one firmware run each:
+    recording a sample from line in and from the mic, the looper (record, close, overdub, pause,
+    resume), the shift menu's copy, erase, bank and mode changes (checked on the card's files),
+    `options.json` (MIDI in and out channels, record latch, written back unchanged), test mode run
+    to the end, and pulling the card. Each matched what TAPE's code says first time; none needed
+    a CHAMPI or daisycola fix beyond the charger bit below.
+  - The script language grew `input mic|line sine <hz> [<level>]` and `input ... off` (headless
+    now feeds the inputs, kept 1024 frames ahead of the output), `sd out|in` and `midiloop on|off`
+    (MIDI out back to MIDI in, as the factory jig does). The log gained `midiout` lines, whole
+    messages split by `MidiSplitter`.
+  - With the factory "Tape Slew", a looper pause is a tape stop: the loop slows down over about
+    1.2 s and then holds its last sample, a small DC offset (about 0.005). A real CHOMPI's output
+    capacitors would block that; CHAMPI passes it through. The test checks the AC level.
+  - Test mode needed VIN_RDY (0x12 bit 5), which the MP2722 model now reports with USB power:
+    the test's power-cable check waits for it to rise. The fault register 0x14 already read 0.
+    `Runtime::Start` takes `test_mode`, which pushes ENC6 before the firmware starts;
+    `champi --test-mode` uses it and the UI lets go once TAPE has booted. The whole factory test
+    passes headless, including the 20 looped MIDI notes; the app needs `midi-out` connected to
+    `events-in` for that check.
+  - Options persistence needed no code: TAPE reads `options.json` at boot and writes it back.
+    There's no options UI on the device either; the README shows the export, edit, import way.
+  - `CardSlot` (`core/card_slot`, in `champi_board`) pulls the card through `SdSetPresent` and
+    remembers whether it's in, since daisycola has no getter. `Runtime::Card()` owns it. TAPE
+    blinks every LED red for 3 s, then plays only its built-in sample; putting the card back needs
+    a restart, as on the device, and the status line says so.
+  - The extractor now places the USB-C socket (J1) and the micro-SD holder (P5) from the main
+    board: both are on the front edge, at x = 25.6 and 253.5 mm, their mouths just past the
+    outline. They're drawn just inside it, under the key numbers. A click on the socket plugs or
+    unplugs USB, the wheel over it sets the battery from 2.8 to 4.2 V (charge done at 4.2 V), and
+    a click on the slot pulls or inserts the card. Keyboard: `sd_card` (F9) and `usb` (F10).
+    TAPE shows a full battery for 20 minutes after charging stops, so the battery control mostly
+    matters for the low-battery lockout.
+  - Encoder feel: TAPE has no acceleration, and its speed, start and end knobs move 0.003 a
+    detent (333 detents end to end), so the host accelerates. `TurnGain` is 1 up to 12 detents a
+    second and grows with the rate up to 4; `TurnRate` smooths the rate over about 50 ms and
+    starts again after a 150 ms pause. Drags and the wheel use it. Held turn keys go 20, 40 then
+    80 detents a second (after 1.3 s and 2.3 s held). `QueueTurn` caps what's queued on an encoder
+    at 12 detents, about 150 ms at daisycola's 80 a second, so a knob stops soon after the hand;
+    turning back always gets through. The constants are a first guess from the arithmetic, not
+    from feeling the hardware.
+  - All 87 tests pass, and pass under ASan and TSan. TSan first caught a test holding ENC6 for a
+    fixed 1.5 s: TAPE counts it over 5000 polls of 100 us, which TSan stretches. Scripts now hold it
+    until `boot`, as the app does.
+  - Screenshots of the running app (normal and `--test-mode`) were taken with niri and checked.
+  - README rewritten in full: features, every option, the panel, keyboard, MIDI, a tour of TAPE
+    (recording, looper, shift menu, presets and options, battery, test mode, pulling the card),
+    the SD card, the whole script language and troubleshooting.
+  - Still manual: playing it by hand to judge the encoder feel, and the CHOMPI output's DC
+    blocking (left as is).
 
 ### 9. Later: TEMPO and WAVE
 - daisycola phase 6: TIM16 MIDI clock, `MidiManager` DMA transmit, `f_opendir`/`readdir`.

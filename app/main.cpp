@@ -46,7 +46,9 @@ void PrintUsage()
                 "                      (default ~/.config/champi/skin; each file is optional)\n"
                 "  --keymap <file>     computer keys for the panel, over the defaults\n"
                 "                      (default ~/.config/champi/keymap.toml, if it exists)\n"
-                "  --print-keymap      print the keymap in use as keymap.toml, and exit\n\n"
+                "  --print-keymap      print the keymap in use as keymap.toml, and exit\n"
+                "  --test-mode         start in TAPE's factory test, as when ENC6 is held at\n"
+                "                      power-on\n\n"
                 "SD card (--sd-reset, --sd-import and --sd-export run and exit):\n%s",
                 kSdUsage);
 }
@@ -90,6 +92,8 @@ int main(int argc, char** argv)
             }
             else if(arg == "--print-keymap")
                 print_keymap = true;
+            else if(arg == "--test-mode")
+                Options().test_mode = true;
             else
                 rest.push_back(arg);
         }

@@ -28,6 +28,28 @@ int ParseInt(const std::string& text, int lo, int hi, const char* what)
     return int(value);
 }
 
+// A decimal number in [lo, hi].
+double ParseNumber(const std::string& text, double lo, double hi, const char* what)
+{
+    size_t used  = 0;
+    double value = 0;
+    try
+    {
+        value = std::stod(text, &used);
+    }
+    catch(const std::exception&)
+    {
+        used = 0;
+    }
+    if(used == 0 || used != text.size() || !(value >= lo && value <= hi))
+    {
+        std::ostringstream message;
+        message << what << " must be " << lo << " to " << hi << ", not " << text;
+        throw std::invalid_argument(message.str());
+    }
+    return value;
+}
+
 // "down"/"up" or "on"/"off".
 int ParseSwitch(const std::string& text, const char* on, const char* off)
 {
@@ -118,6 +140,29 @@ Command ParseCommand(const std::vector<std::string>& words)
         args(1, 1);
         c.type  = Command::Type::kBattery;
         c.value = ParseInt(words[1], 0, 5000, "millivolts");
+    }
+    else if(name == "input")
+    {
+        if(words.size() < 3)
+            throw std::invalid_argument("input takes mic or line, then sine <hz> [<level>] or off");
+        c.type   = Command::Type::kInput;
+        c.target = int(ParseSwitch(words[1], "line", "mic") ? Input::kLine : Input::kMic);
+        if(words[2] == "off")
+            args(2, 2);
+        else if(words[2] == "sine")
+        {
+            args(3, 4);
+            c.hz    = ParseNumber(words[3], 1, 20000, "hz");
+            c.level = words.size() > 4 ? ParseNumber(words[4], 0, 1, "level") : 0.5;
+        }
+        else
+            throw std::invalid_argument("expected sine or off, not " + words[2]);
+    }
+    else if(name == "sd" || name == "midiloop")
+    {
+        args(1, 1);
+        c.type  = name == "sd" ? Command::Type::kSd : Command::Type::kMidiLoop;
+        c.value = name == "sd" ? ParseSwitch(words[1], "in", "out") : ParseSwitch(words[1], "on", "off");
     }
     else if(name == "mark")
     {

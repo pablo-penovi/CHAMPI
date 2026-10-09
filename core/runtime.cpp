@@ -39,15 +39,18 @@ Runtime& Runtime::Get()
     return runtime;
 }
 
-void Runtime::Start(const std::filesystem::path& sd_image, daisycola::AudioClock clock)
+void Runtime::Start(const std::filesystem::path& sd_image, daisycola::AudioClock clock, bool test_mode)
 {
     if(started_)
         throw std::logic_error("the firmware runs only once per process");
     started_ = true;
 
     daisycola::SdOpenImage(sd_image.string());
+    card_.SetInserted(true);
     panel_.Attach();
     charger_.Attach();
+    if(test_mode)
+        panel_.SetEncoderPushed(6, true);
     daisycola::SetAudioClock(clock);
 
     BENIGN_RACE(booting);
