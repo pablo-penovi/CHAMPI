@@ -1,0 +1,124 @@
+# Releases CHAMPI when VERSION.md names a version newer than every vX.Y.Z tag and release on GitHub
+# (or there are none yet): builds with GCC 16, runs the tests, and publishes a Linux x86_64 tarball
+# with the executable and the factory SD card profile it seeds new cards from.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare VERSION.md with the latest tag or release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(tr -d '[:space:]' < VERSION.md)
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=VERSION.md::'$version' isn't a version like v1.2.3"
+            exit 1
+          fi
+          latest=$( { git tag --list; gh release list --limit 1000 --json tagName --jq '.[].tagName'; } \
+                    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -z "$latest" ]; then
+            echo "No releases yet: releasing $version"
+            release=true
+          elif [ "$version" != "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -n 1)" = "$version" ]; then
+            echo "$version is newer than $latest: releasing"
+            release=true
+          else
+            echo "$version isn't newer than $latest: nothing to release"
+            release=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # GCC 16, as CHAMPI is developed with. The image is Debian 13, so the binary needs glibc 2.41
+    # or newer; libstdc++ is linked in, since the image's GCC isn't the system one.
+    container: gcc:16
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      CC: /usr/local/bin/gcc
+      CXX: /usr/local/bin/g++
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            cmake pkg-config python3 libgtest-dev \
+            libjack-jackd2-dev libsamplerate0-dev \
+            libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libdbus-1-dev
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          gcc --version
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build -j"$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build -j"$(nproc)" --output-on-failure
+
+      - name: Package
+        run: |
+          name="champi-$VERSION-linux-x86_64"
+          mkdir -p "dist/$name/card-profiles"
+          cp build/bin/champi README.md LICENSE "dist/$name/"
+          cp -r third_party/CHOMPI/firmware/card-profiles/tape-2.0 "dist/$name/card-profiles/"
+          cp third_party/CHOMPI/LICENSE "dist/$name/card-profiles/CHOMPI-LICENSE"
+          strip "dist/$name/champi"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+          path: dist
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "CHAMPI $VERSION" \
+            --generate-notes \
+            --notes "Linux x86_64, for distributions with glibc 2.41 or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch and later). Unpack it and run ./champi from the folder, keeping card-profiles/ next to the executable. It needs libjack (JACK or PipeWire's JACK), libsamplerate and OpenGL installed: see the README."
