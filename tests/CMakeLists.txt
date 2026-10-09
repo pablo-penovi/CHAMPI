@@ -25,8 +25,18 @@ target_link_libraries(champi_test_tape_encoder PUBLIC daisycola PRIVATE champi_f
 add_executable(champi-tests
     board_test.cpp
     sd_card_test.cpp
+    script_test.cpp
     sd_cli_test.cpp
 )
 target_link_libraries(champi-tests PRIVATE
-    champi_board champi_sd champi_test_tape_encoder champi_warnings GTest::gtest_main)
+    champi_board champi_sd champi_script champi_test_tape_encoder champi_warnings GTest::gtest_main)
 gtest_discover_tests(champi-tests DISCOVERY_MODE PRE_TEST)
+
+# Golden tests: scripts run through champi-headless, one firmware process per run.
+add_executable(champi-headless-tests headless_test.cpp)
+target_link_libraries(champi-headless-tests PRIVATE daisycola champi_warnings GTest::gtest_main)
+target_compile_definitions(champi-headless-tests PRIVATE
+    CHAMPI_HEADLESS="$<TARGET_FILE:champi-headless>"
+    CHAMPI_FACTORY_CARD_DIR="${CHOMPI_DIR}/firmware/card-profiles/tape-2.0")
+add_dependencies(champi-headless-tests champi-headless)
+gtest_discover_tests(champi-headless-tests DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 300)

@@ -36,3 +36,8 @@ target_link_libraries(champi_sd PUBLIC daisycola PRIVATE champi_warnings)
 add_library(champi_board STATIC panel_state.cpp mp2722.cpp led_frame.cpp)
 target_include_directories(champi_board PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_board PUBLIC daisycola PRIVATE champi_warnings)
+
+# TAPE running on daisycola's virtual MCU, with the board wired up.
+add_library(champi_runtime STATIC runtime.cpp)
+target_include_directories(champi_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(champi_runtime PUBLIC champi_board PRIVATE champi_fw_tape champi_warnings)
