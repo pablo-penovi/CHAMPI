@@ -1,4 +1,7 @@
-# CHAMPI
+<p align="center">
+  <img src="champi.png" alt="Champi, a happy mushroom" height="160">
+  <img src="docs/assets/champi-title.svg" alt="CHAMPI" height="160">
+</p>
 
 CHAMPI is a native Linux virtual instrument that runs the real
 [CHOMPI](https://github.com/CHOMPI-Club/CHOMPI) TAPE firmware on x86.
