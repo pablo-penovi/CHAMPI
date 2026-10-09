@@ -32,8 +32,9 @@ target_compile_definitions(champi_sd PRIVATE
     CHAMPI_FACTORY_CARD_DIR="${CHOMPI_DIR}/firmware/card-profiles/tape-2.0")
 target_link_libraries(champi_sd PUBLIC daisycola PRIVATE champi_warnings)
 
-# The CHOMPI board on top of daisycola: panel wiring, the MP2722 charger and the LED layout.
-add_library(champi_board STATIC panel_state.cpp mp2722.cpp led_frame.cpp)
+# The CHOMPI board on top of daisycola: panel wiring, the MP2722 charger, the card slot and the LED
+# layout.
+add_library(champi_board STATIC panel_state.cpp mp2722.cpp card_slot.cpp led_frame.cpp)
 target_include_directories(champi_board PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_board PUBLIC daisycola PRIVATE champi_warnings)
 

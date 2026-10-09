@@ -13,6 +13,11 @@
 //   midi <byte>...            send bytes to the TRS MIDI input, in hex: midi 90 3c 7f
 //   usb on|off                USB power to the charger
 //   battery <millivolts>      the battery voltage
+//   input mic|line sine <hz> [<level>]
+//                             play a sine into the mic or both line inputs (level 0-1, default 0.5)
+//   input mic|line off        silence it again
+//   sd out|in                 pull the SD card out, or put it back
+//   midiloop on|off           a cable from MIDI out back to MIDI in, as on the factory test jig
 //   mark <text>               write a marker line into the log
 #pragma once
 
@@ -38,16 +43,28 @@ struct Command
         kMidi,
         kUsb,
         kBattery,
+        kInput,
+        kSd,
+        kMidiLoop,
         kMark,
     };
 
     Type                 type;
     int                  line   = 0; // in the script, from 1
-    int                  target = 0; // KEYn or ENCn
-    int                  value  = 0; // 1/0 for down/up and on/off, detents, millivolts
+    int                  target = 0; // KEYn or ENCn; for input, an Input
+    int                  value  = 0; // 1/0 for down/up, on/off and in/out, detents, millivolts
+    double               hz     = 0; // input: the sine's frequency, 0 for off
+    double               level  = 0; // input: its peak level
     uint32_t             ms     = 0; // boot and wait
     std::vector<uint8_t> bytes;      // midi
     std::string          text;       // the command as written, for the log
+};
+
+/** Where `input` plays. */
+enum class Input
+{
+    kMic,
+    kLine,
 };
 
 /** A script line that doesn't parse. The message names the line. */

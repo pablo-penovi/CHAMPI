@@ -9,6 +9,7 @@
 
 #include "daisycola/host.h"
 #include "keyboard.h"
+#include "panel.h"
 #include "panel_layout.h"
 #include "panel_state.h"
 
@@ -99,6 +100,8 @@ TEST(DefaultKeymap, TrackerStyleTwoOctaves)
     EXPECT_EQ(m.Lookup(KEY_ENTER), Key(champi::kLoopKey));
     EXPECT_EQ(m.Lookup(KEY_GRAVE), (Action{Kind::kToggle, 0}));
     EXPECT_EQ(m.Lookup(KEY_F12), (Action{Kind::kLineIn, 0}));
+    EXPECT_EQ(m.Lookup(KEY_F9), (Action{Kind::kSdCard, 0}));
+    EXPECT_EQ(m.Lookup(KEY_F10), (Action{Kind::kUsb, 0}));
     EXPECT_EQ(m.Lookup(KEY_BACKSLASH), (Action{Kind::kPush, 0}));
     EXPECT_EQ(m.KeysFor({Kind::kTurnLeft, 0}), (std::vector<Scancode>{KEY_LEFTBRACE, KEY_LEFT}));
     EXPECT_EQ(m.KeysFor({Kind::kTurnRight, 0}), (std::vector<Scancode>{KEY_RIGHTBRACE, KEY_RIGHT}));
@@ -128,7 +131,8 @@ TEST(DefaultKeymap, EveryActionHasAKey)
         EXPECT_FALSE(m.KeysFor(Key(k)).empty()) << "KEY" << k;
     for(int e = 1; e <= champi::kNumEncoders; e++)
         EXPECT_FALSE(m.KeysFor(Select(e)).empty()) << "ENC" << e;
-    for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn})
+    for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn, Kind::kUsb,
+                     Kind::kSdCard})
         EXPECT_FALSE(m.KeysFor({kind, 0}).empty()) << champi::ActionName({kind, 0});
 }
 
@@ -207,7 +211,10 @@ class PanelKeyboard : public ::testing::Test
     }
     static void TearDownTestSuite() { daisycola::UseManualClock(false); }
 
-    void SetUp() override { keys_ = std::make_unique<KeyboardControl>(panel_, Keymap::Defaults()); }
+    void SetUp() override
+    {
+        keys_ = std::make_unique<KeyboardControl>(panel_, charger_, card_, Keymap::Defaults());
+    }
 
     void TearDown() override
     {
@@ -221,11 +228,15 @@ class PanelKeyboard : public ::testing::Test
         }
         panel_.SetToggle(true);
         panel_.SetLineIn(false);
+        charger_.SetUsbPower(true);
+        card_.SetInserted(true);
     }
 
     Clock::time_point At(int ms) const { return t0_ + std::chrono::milliseconds(ms); }
 
     static champi::PanelState        panel_;
+    champi::Mp2722                   charger_;
+    champi::CardSlot                 card_;
     std::unique_ptr<KeyboardControl> keys_;
     const Clock::time_point          t0_ = Clock::now();
 };
@@ -260,7 +271,7 @@ TEST_F(PanelKeyboard, ChordsAndTwoKeysOnOnePanelKey)
 
     Keymap m = Keymap::Defaults();
     m.Apply("key_1 = [\"Z\", \"A\"]");
-    KeyboardControl two(panel_, m);
+    KeyboardControl two(panel_, charger_, card_, m);
     two.Press(KEY_Z, At(0));
     two.Press(KEY_A, At(10));
     two.Release(KEY_Z);
@@ -321,6 +332,43 @@ TEST_F(PanelKeyboard, HoldingATurnKeyRepeats)
     EXPECT_EQ(panel_.PendingDetents(5), 5);
 }
 
+TEST_F(PanelKeyboard, HeldLongerTheRepeatTurnsFaster)
+{
+    using std::chrono::milliseconds;
+    keys_->Press(KEY_F2, At(0)); // ENC1
+    keys_->Press(KEY_RIGHT, At(0));
+    // Tick every repeat, letting the board play the queue out as it goes, and count what's sent.
+    auto turned_between = [&](milliseconds from, milliseconds to) {
+        const int before = keys_->Turned(1);
+        for(auto t = from; t < to; t += KeyboardControl::kRepeatEvery)
+        {
+            keys_->Tick(At(0) + t);
+            panel_.TurnEncoder(1, -panel_.PendingDetents(1));
+        }
+        return keys_->Turned(1) - before;
+    };
+    EXPECT_EQ(turned_between(milliseconds(300), milliseconds(1300)), 20); // 20 a second
+    EXPECT_EQ(turned_between(milliseconds(1300), milliseconds(2300)), 40);
+    EXPECT_EQ(turned_between(milliseconds(2300), milliseconds(3300)), 80);
+    keys_->Release(KEY_RIGHT);
+}
+
+TEST_F(PanelKeyboard, TurnsQueueNoFurtherThanTheBoardKeepsUp)
+{
+    keys_->Press(KEY_F2, At(0));
+    keys_->Press(KEY_RIGHT, At(0));
+    for(int t = 300; t < 5000; t += 50)
+        keys_->Tick(At(t)); // the manual clock stands still: nothing plays out
+    EXPECT_EQ(panel_.PendingDetents(1), champi::kMaxPendingDetents);
+    EXPECT_EQ(keys_->Turned(1), champi::kMaxPendingDetents) << "the knob shows what was sent";
+    keys_->Release(KEY_RIGHT);
+
+    // Turning back always gets through.
+    keys_->Press(KEY_LEFT, At(6000));
+    EXPECT_EQ(panel_.PendingDetents(1), champi::kMaxPendingDetents - 1);
+    keys_->Release(KEY_LEFT);
+}
+
 TEST_F(PanelKeyboard, PushHoldsTheEncoderItPushed)
 {
     keys_->Press(KEY_F2, At(0)); // ENC1
@@ -358,6 +406,25 @@ TEST_F(PanelKeyboard, ToggleAndLineInFlipOnAPress)
     keys_->Release(KEY_F12);
     keys_->Press(KEY_F12, At(400));
     EXPECT_FALSE(panel_.LineIn());
+}
+
+TEST_F(PanelKeyboard, UsbAndTheSdCardFlipOnAPress)
+{
+    ASSERT_TRUE(charger_.UsbPower());
+    keys_->Press(KEY_F10, At(0));
+    EXPECT_FALSE(charger_.UsbPower());
+    keys_->Release(KEY_F10);
+    keys_->Press(KEY_F10, At(100));
+    EXPECT_TRUE(charger_.UsbPower());
+    keys_->Release(KEY_F10);
+
+    ASSERT_TRUE(card_.Inserted());
+    keys_->Press(KEY_F9, At(200));
+    EXPECT_FALSE(card_.Inserted());
+    keys_->Release(KEY_F9);
+    keys_->Press(KEY_F9, At(300));
+    EXPECT_TRUE(card_.Inserted());
+    keys_->Release(KEY_F9);
 }
 
 TEST_F(PanelKeyboard, LosingFocusLetsGoOfEverything)

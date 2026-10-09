@@ -7,7 +7,9 @@
 
 #include <chrono>
 
+#include "card_slot.h"
 #include "daisycola/host.h"
+#include "mp2722.h"
 #include "panel_layout.h"
 #include "panel_state.h"
 
@@ -19,6 +21,7 @@ constexpr float kKnobRing       = 16.4f; // the gold ring round the small encode
 constexpr float kKnob           = 12.0f; // the small encoders' white knobs
 constexpr float kScrubWheel     = 33.0f; // ENC5's knob
 constexpr float kJack           = 6.0f;  // the jack sockets drawn at the right edge
+constexpr float kFrontEdgeY     = 104.4f; // the USB socket and SD slot, drawn just inside the front edge
 constexpr int   kDetentsPerTurn = 24;    // PEC11 encoders, for drawing the knobs
 
 /** What a point on the panel is over. */
@@ -31,6 +34,8 @@ struct Hit
         kEncoder,
         kToggle,
         kLineIn,
+        kUsb,    // the USB socket: power, and the battery behind it
+        kSdCard, // the SD slot
     };
     Kind kind  = Kind::kNone;
     int  index = 0; // KEYn or ENCn, numbered from 1
@@ -49,6 +54,10 @@ layout::Circle Knob(int encoder);
 /** The line-in jack socket, drawn at the right edge level with the real one. */
 layout::Circle LineInJack();
 
+/** The USB-C socket and the SD slot, drawn just inside the front edge above the real ones. */
+layout::Rect UsbSocket();
+layout::Rect SdSlot();
+
 /** An LED's colour on screen, each channel from 0 to 1. */
 struct Light
 {
@@ -65,14 +74,55 @@ Light LedLight(const daisycola::Rgb& led, int divisor);
 constexpr int kSmtDivisor = 4;
 constexpr int kPthDivisor = 11;
 
+// ---- Turning feel ------------------------------------------------------------------------------
+//
+// TAPE has no encoder acceleration, and its speed, start and end knobs move 1/333 of their range a
+// detent. So the host accelerates: turned slowly, a detent on screen is a detent; turned faster,
+// each counts for more, up to kMaxTurnGain. And the board only plays about 80 detents a second, so
+// what's queued is capped: a knob stops soon after the hand does.
+
+/** The gain at `rate` detents a second: 1 up to kAccelFrom, then growing in step with the rate. */
+constexpr float kAccelFrom   = 12;
+constexpr float kMaxTurnGain = 4;
+float           TurnGain(float rate);
+
+/** At most this many detents wait on an encoder, about 150 ms of turning. */
+constexpr int kMaxPendingDetents = 12;
+
+/** Queues detents on ENCn, as many as fit under kMaxPendingDetents; turning back always fits.
+ *  Returns how many were queued. */
+int QueueTurn(PanelState& panel, int encoder, int detents);
+
+/** How fast something is turning, in detents a second, smoothed over about 50 ms. */
+class TurnRate
+{
+  public:
+    using Clock = std::chrono::steady_clock;
+
+    /** `detents` turned at `now`; returns the rate. A pause of over 150 ms starts again. */
+    float Update(float detents, Clock::time_point now);
+
+  private:
+    float             rate_ = 0;
+    Clock::time_point last_{};
+    bool              started_ = false;
+};
+
+// Battery voltages the wheel over the USB socket goes between, in steps.
+constexpr uint32_t kBatteryMinMv  = 2800;
+constexpr uint32_t kBatteryFullMv = 4200;
+constexpr uint32_t kBatteryStepMv = 100;
+
 /**
  * The mouse on the panel, played through PanelState.
  *
  * - Keys play while the button is held.
- * - Encoders turn with a vertical drag (up is clockwise) or the scroll wheel. A click pushes one
- *   briefly; holding the button still pushes it until release, and dragging then turns it while
- *   pushed.
+ * - Encoders turn with a vertical drag (up is clockwise) or the scroll wheel, faster than 1:1 when
+ *   turned fast (see TurnGain). A click pushes one briefly; holding the button still pushes it
+ *   until release, and dragging then turns it while pushed.
  * - The toggle switch and the line-in jack flip with a click.
+ * - A click on the USB socket plugs or unplugs USB power; the wheel over it sets the battery
+ *   voltage, full at 4.2 V. A click on the SD slot pulls the card out or puts it back.
  *
  * Times come from the caller, so it can be driven without a clock.
  */
@@ -88,14 +138,18 @@ class MouseControl
     static constexpr auto kHoldToPush = std::chrono::milliseconds(300);
     static constexpr auto kClickPush  = std::chrono::milliseconds(80);
 
-    explicit MouseControl(PanelState& panel) : panel_(panel) {}
+    MouseControl(PanelState& panel, Mp2722& charger, CardSlot& card)
+        : panel_(panel), charger_(charger), card_(card)
+    {
+    }
 
     /** The left button went down. Returns false if it wasn't over anything. */
     bool Press(float x, float y, Clock::time_point now);
     void Move(float x, float y, Clock::time_point now);
     void Release(Clock::time_point now);
-    /** The wheel turned by `steps` (up is positive) at x, y. Returns false if not over an encoder. */
-    bool Scroll(float x, float y, float steps);
+    /** The wheel turned by `steps` (up is positive) at x, y. Returns false if it's not over an
+     *  encoder or the USB socket. */
+    bool Scroll(float x, float y, float steps, Clock::time_point now);
     /** Call regularly: holds and clicks on the encoders end on time. */
     void Tick(Clock::time_point now);
 
@@ -107,14 +161,20 @@ class MouseControl
     void EndClick();
 
     PanelState& panel_;
+    Mp2722&     charger_;
+    CardSlot&   card_;
     int         turned_[kNumEncoders] = {};
     int         key_                  = 0; // the key held down, if any
-    float       scroll_               = 0; // wheel steps not yet a whole detent
+    float       scroll_               = 0; // wheel detents not yet whole
+    float       battery_scroll_       = 0; // wheel steps over the USB socket not yet whole
+    TurnRate    scroll_rate_;
 
     // The encoder the button went down on, and what the press has done so far.
     int               encoder_  = 0;
     float             start_y_  = 0;
-    int               dragged_  = 0; // detents sent since the drag started
+    float             last_y_   = 0;
+    float             dragged_  = 0; // detents dragged but not yet sent
+    TurnRate          drag_rate_;
     bool              dragging_ = false;
     bool              pushed_   = false;
     Clock::time_point pressed_at_{};

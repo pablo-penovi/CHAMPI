@@ -291,7 +291,9 @@ TEST_F(Board, ChargerAnswersTapesStatusRead)
     charger.SetChargeDone(false);
     std::array<uint8_t, 6> s = ReadStatus();
     EXPECT_EQ(s[1] >> 6 & 1, 1) << "VIN_GD";
+    EXPECT_EQ(s[1] >> 5 & 1, 1) << "VIN_RDY";
     EXPECT_EQ(s[1] >> 4 & 1, 0) << "LEGACY_CABLE";
+    EXPECT_EQ(s[3], 0) << "no faults";
     EXPECT_EQ(s[0] & 1, 0) << "IINDPM_STAT";
     EXPECT_NE(s[2] >> 5, 0b101) << "CHG_STAT";
     EXPECT_EQ(s[5] >> 4 & 1, 0) << "BATT_LOW_STAT";
@@ -300,6 +302,7 @@ TEST_F(Board, ChargerAnswersTapesStatusRead)
     charger.SetUsbPower(false);
     s = ReadStatus();
     EXPECT_EQ(s[1] >> 6 & 1, 0) << "VIN_GD";
+    EXPECT_EQ(s[1] >> 5 & 1, 0) << "VIN_RDY";
     EXPECT_EQ(s[2] >> 5, 0b101) << "CHG_STAT";
 }
 
@@ -380,5 +383,5 @@ TEST_F(Board, ChargerStoresOtherRegisters)
     EXPECT_EQ(charger.Register(0x08), 0b10111111);
     hw.MpWrite(0x12, 0x00); // status: read-only
     charger.SetUsbPower(true);
-    EXPECT_EQ(charger.Register(0x12), 1 << 6);
+    EXPECT_EQ(charger.Register(0x12), 1 << 6 | 1 << 5);
 }

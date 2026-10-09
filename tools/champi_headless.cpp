@@ -5,8 +5,11 @@
 // The log has one line per event: `<ms> <frame> <event>`, where ms is the time since the firmware
 // started and frame is how many audio frames the WAV holds at that point. Events are `start`,
 // `booted`, each script command as written, `leds` with the 35 LED colours as rrggbb (KEY1-28,
-// ENC1-6, then ENC5's second LED) whenever they change, and `end`.
+// ENC1-6, then ENC5's second LED) whenever they change, `midiout` with each message the firmware
+// sends on the TRS jack, in hex, and `end`.
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <fstream>
@@ -19,6 +22,7 @@
 
 #include "daisycola/host.h"
 #include "led_frame.h"
+#include "midi_splitter.h"
 #include "runtime.h"
 #include "script.h"
 #include "sd_cli.h"
@@ -183,6 +187,9 @@ class Session
                 break;
             case Type::kUsb: runtime.Charger().SetUsbPower(c.value); break;
             case Type::kBattery: runtime.Charger().SetBatteryMillivolts(uint32_t(c.value)); break;
+            case Type::kInput: inputs_[c.target] = {c.hz, c.level, 0}; break;
+            case Type::kSd: runtime.Card().SetInserted(c.value); break;
+            case Type::kMidiLoop: midi_loop_ = c.value; break;
             case Type::kMark: break;
         }
     }
@@ -204,9 +211,11 @@ class Session
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
-    // Collects the audio produced so far and logs the LEDs if they changed.
+    // Collects the audio and MIDI produced so far, keeps the inputs fed, and logs the LEDs if
+    // they changed.
     void Pump()
     {
+        PumpMidi();
         static float buffers[daisycola::kMaxAudioChannels][1024];
         float*       out[daisycola::kMaxAudioChannels] = {buffers[0], buffers[1], buffers[2], buffers[3]};
         for(size_t n; (n = daisycola::ReadAudio(out, 1024)) > 0;)
@@ -218,6 +227,7 @@ class Session
                 wav_->Write(master, n);
             }
         }
+        FeedInputs();
 
         LedFrame frame;
         ReadLedFrame(frame);
@@ -241,6 +251,55 @@ class Session
         }
     }
 
+    // Logs what the firmware sent on the TRS jack, and loops it back in if the cable is in.
+    void PumpMidi()
+    {
+        uint8_t bytes[256];
+        for(size_t n; (n = daisycola::ReadMidiOut(daisycola::MidiPort::kUart, bytes, sizeof bytes)) > 0;)
+        {
+            if(midi_loop_)
+                daisycola::WriteMidiIn(daisycola::MidiPort::kUart, bytes, n);
+            for(size_t i = 0; i < n; i++)
+                if(midi_out_.Feed(bytes[i]))
+                {
+                    std::string message = "midiout";
+                    for(size_t b = 0; b < midi_out_.Size(); b++)
+                    {
+                        char hex[4];
+                        std::snprintf(hex, sizeof hex, " %02x", midi_out_.Data()[b]);
+                        message += hex;
+                    }
+                    Log(message);
+                }
+        }
+    }
+
+    // Keeps the firmware's input queue kInputLead frames ahead of the output read so far, so an
+    // input change reaches it within that time. TAPE's inputs: 1 is the mic, 3 and 4 line in.
+    void FeedInputs()
+    {
+        constexpr uint64_t kInputLead = 1024;
+        constexpr size_t   kChunk     = 256;
+        static float       mic[kChunk], line[kChunk];
+        while(fed_ < frames_ + kInputLead)
+        {
+            const size_t n = size_t(std::min<uint64_t>(kChunk, frames_ + kInputLead - fed_));
+            Sine         m = inputs_[int(Input::kMic)], l = inputs_[int(Input::kLine)];
+            for(size_t i = 0; i < n; i++)
+            {
+                mic[i]  = m.Next();
+                line[i] = l.Next();
+            }
+            const float* in[daisycola::kMaxAudioChannels] = {mic, nullptr, line, line};
+            const size_t written                          = daisycola::WriteAudio(in, n);
+            inputs_[int(Input::kMic)].Advance(written);
+            inputs_[int(Input::kLine)].Advance(written);
+            fed_ += written;
+            if(written < n)
+                break;
+        }
+    }
+
     void Log(const std::string& event)
     {
         if(log_)
@@ -248,7 +307,27 @@ class Session
                          (unsigned long long)frames_, event.c_str());
     }
 
+    // A test tone on an input; silent at 0 Hz.
+    struct Sine
+    {
+        double hz = 0, level = 0, phase = 0; // phase in cycles
+
+        float Next()
+        {
+            if(hz <= 0)
+                return 0;
+            const float v = float(level * std::sin(2 * M_PI * phase));
+            phase         = std::fmod(phase + hz / 48000, 1.0);
+            return v;
+        }
+        void Advance(size_t frames) { phase = std::fmod(phase + hz * double(frames) / 48000, 1.0); }
+    };
+
     std::unique_ptr<WavWriter>            wav_;
+    Sine                                  inputs_[2];
+    uint64_t                              fed_       = 0; // input frames queued
+    bool                                  midi_loop_ = false;
+    MidiSplitter                          midi_out_;
     FILE*                                 log_ = nullptr;
     std::chrono::steady_clock::time_point start_;
     uint64_t                              frames_ = 0;

@@ -13,6 +13,8 @@
 #include <string_view>
 #include <vector>
 
+#include "card_slot.h"
+#include "mp2722.h"
 #include "panel_state.h"
 
 namespace champi
@@ -38,6 +40,8 @@ struct Action
         kPush,          // pushes the selected encoder while held
         kToggle,        // flips the toggle switch
         kLineIn,        // plugs or unplugs the line-in jack
+        kUsb,           // plugs or unplugs USB power
+        kSdCard,        // pulls the SD card out or puts it back
     };
     Kind kind  = Kind::kNone;
     int  index = 0; // KEYn or ENCn, numbered from 1
@@ -96,9 +100,10 @@ class Keymap
  *
  * - Panel keys play while held. Two computer keys on one panel key hold it until both are up.
  * - The select keys pick an encoder. The turn keys turn it a detent, and after kRepeatDelay keep
- *   turning it every kRepeatEvery while held (the window's own key repeat should be off). The push
- *   key holds it pushed; it stays on the encoder it pushed even if another is selected meanwhile.
- * - The toggle and line-in keys flip on a press.
+ *   turning it every kRepeatEvery while held (the window's own key repeat should be off), by more
+ *   each time the longer they're held. The push key holds it pushed; it stays on the encoder it
+ *   pushed even if another is selected meanwhile.
+ * - The toggle, line-in, USB and SD-card keys flip on a press.
  *
  * Times come from the caller, so it can be driven without a clock.
  */
@@ -109,11 +114,17 @@ class KeyboardControl
 
     static constexpr auto kRepeatDelay = std::chrono::milliseconds(300);
     static constexpr auto kRepeatEvery = std::chrono::milliseconds(50);
+    /** Held this long, a repeat turns 2 detents, then 4: 20, 40 and 80 detents a second. */
+    static constexpr auto kRepeatFaster  = std::chrono::milliseconds(1300);
+    static constexpr auto kRepeatFastest = std::chrono::milliseconds(2300);
 
     /** ENC4 is selected at first: the speed knob, leftmost. */
     static constexpr int kFirstSelected = 4;
 
-    KeyboardControl(PanelState& panel, Keymap keymap) : panel_(panel), keymap_(std::move(keymap)) {}
+    KeyboardControl(PanelState& panel, Mp2722& charger, CardSlot& card, Keymap keymap)
+        : panel_(panel), charger_(charger), card_(card), keymap_(std::move(keymap))
+    {
+    }
 
     /** A key went down. Returns false if it isn't mapped. Repeats of a held key are ignored. */
     bool Press(Scancode code, Clock::time_point now);
@@ -143,6 +154,8 @@ class KeyboardControl
     void Turn(int detents);
 
     PanelState&                 panel_;
+    Mp2722&                     charger_;
+    CardSlot&                   card_;
     Keymap                      keymap_;
     std::map<Scancode, Held>    held_;
     int                         key_holds_[kNumKeys] = {};
@@ -153,6 +166,7 @@ class KeyboardControl
     // The turn key that repeats: the last one pressed and still held.
     Scancode          repeat_key_ = -1;
     int               repeat_dir_ = 0;
+    Clock::time_point repeat_pressed_{};
     Clock::time_point next_repeat_{};
 };
 

@@ -94,8 +94,10 @@ class ChampiUI : public UI
   public:
     ChampiUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT),
-          mouse_(champi::Runtime::Get().Panel()),
-          keyboard_(champi::Runtime::Get().Panel(), champi::Options().keymap)
+          mouse_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger(), champi::Runtime::Get().Card()),
+          keyboard_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger(), champi::Runtime::Get().Card(),
+                    champi::Options().keymap),
+          test_mode_hold_(champi::Options().test_mode)
     {
         loadSharedResources();
         setGeometryConstraints(DISTRHO_UI_DEFAULT_WIDTH / 2, DISTRHO_UI_DEFAULT_HEIGHT / 2, true);
@@ -110,6 +112,12 @@ class ChampiUI : public UI
     void uiIdle() override
     {
         champi::ReadLedFrame(leds_);
+        // --test-mode holds ENC6 from power-on (see ChampiPlugin) until the firmware has booted.
+        if(test_mode_hold_ && champi::Runtime::Get().Booted())
+        {
+            test_mode_hold_ = false;
+            champi::Runtime::Get().Panel().SetEncoderPushed(6, false);
+        }
         mouse_.Tick(std::chrono::steady_clock::now());
         keyboard_.Tick(std::chrono::steady_clock::now());
 
@@ -151,6 +159,7 @@ class ChampiUI : public UI
         DrawToggle();
         DrawMic();
         DrawJacks();
+        DrawFrontEdge();
         DrawStatus();
     }
 
@@ -181,7 +190,7 @@ class ChampiUI : public UI
     {
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
-        return mouse_.Scroll(x, y, float(ev.delta.getY()));
+        return mouse_.Scroll(x, y, float(ev.delta.getY()), std::chrono::steady_clock::now());
     }
 
     bool onKeyboard(const KeyboardEvent& ev) override
@@ -629,13 +638,70 @@ class ChampiUI : public UI
         socket(layout::kPhonesJack, "PHONES", false);
     }
 
+    // The USB socket and the SD slot face the player. They're drawn just inside the front edge,
+    // over the real ones. A click on the socket plugs or unplugs USB power, the wheel over it sets
+    // the battery; a click on the slot pulls the card out or puts it back.
+    void DrawFrontEdge()
+    {
+        champi::Runtime& runtime = champi::Runtime::Get();
+        fontFace(NANOVG_DEJAVU_SANS_TTF);
+        fontSize(2.4f);
+        fillColor(kCream);
+
+        const layout::Rect usb = champi::UsbSocket();
+        beginPath();
+        roundedRect(usb.x, usb.y, usb.w, usb.h, usb.h / 2);
+        fillColor(Color(150, 150, 150));
+        fill();
+        beginPath();
+        roundedRect(usb.x + 0.6f, usb.y + 0.6f, usb.w - 1.2f, usb.h - 1.2f, (usb.h - 1.2f) / 2);
+        fillColor(runtime.Charger().UsbPower() ? Color(60, 60, 62) : Color(4, 4, 4));
+        fill();
+        if(runtime.Charger().UsbPower())
+        {
+            // The plug's tongue, and its cable running off the front.
+            beginPath();
+            rect(usb.x + 2.2f, usb.y + usb.h / 2 - 0.35f, usb.w - 4.4f, 0.7f);
+            fillColor(Color(190, 190, 190));
+            fill();
+            beginPath();
+            rect(usb.x + usb.w / 2 - 1.1f, usb.y + usb.h, 2.2f, layout::kHeight - usb.y - usb.h);
+            fillColor(Color(34, 34, 36));
+            fill();
+        }
+        char label[32];
+        std::snprintf(label, sizeof label, "USB  %.1f V", runtime.Charger().BatteryMillivolts() / 1000.0);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(usb.x + usb.w + 1.5f, usb.y + usb.h / 2, label, nullptr);
+
+        const layout::Rect sd = champi::SdSlot();
+        beginPath();
+        roundedRect(sd.x, sd.y, sd.w, sd.h, 0.4f);
+        fillColor(Color(4, 4, 4));
+        fill();
+        if(runtime.Card().Inserted())
+        {
+            beginPath(); // the card's back edge, flush in the slot
+            rect(sd.x + 0.8f, sd.y + 0.4f, sd.w - 1.6f, sd.h - 0.8f);
+            fillColor(Color(70, 70, 76));
+            fill();
+        }
+        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(sd.x - 1.5f, sd.y + sd.h / 2, runtime.Card().Inserted() ? "SD" : "NO SD", nullptr);
+    }
+
     void DrawStatus()
     {
         char status[200];
         std::snprintf(status, sizeof status,
                       "%s    %.0f Hz / %u%s    load %.0f%% (peak %.0f%%)    xruns %llu    late %llu    "
                       "dropouts %llu",
-                      champi::Runtime::Get().Booted() ? "running" : "booting", getSampleRate(),
+                      !champi::Runtime::Get().Card().Inserted() ? "no SD card (restart to read it again)"
+                      : champi::Runtime::Get().Booted()         ? "running"
+                                                                : "booting",
+                      getSampleRate(),
                       Plugin().getBufferSize(), Plugin().Resampling() ? " resampled" : "",
                       load_.average * 100, load_.peak * 100, (unsigned long long)champi::g_xruns.load(),
                       (unsigned long long)load_.late_blocks, (unsigned long long)load_.dropouts);
@@ -653,6 +719,7 @@ class ChampiUI : public UI
     std::chrono::steady_clock::time_point last_load_{};
     Skin                                  skin_;
     bool                                  skin_loaded_ = false;
+    bool                                  test_mode_hold_;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChampiUI)
 };

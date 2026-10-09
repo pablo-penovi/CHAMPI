@@ -2,7 +2,8 @@
 
 The enclosure's top panel (CC_Chompi_Rev4_Enc_TOP.brd) has the outline, the cut-outs the keys
 show through, and the holes for the encoders, the scrub wheel and the LED windows. The main board
-(CC_Chompi_Rev4.brd) says which part is which: KEYn, SWn (ENCn) and the LEDs. Both are EAGLE XML
+(CC_Chompi_Rev4.brd) says which part is which: KEYn, SWn (ENCn), the LEDs, and the USB socket and
+SD slot on the front edge. Both are EAGLE XML
 in millimetres. The main board sits under the panel at a fixed offset, which is fitted here from
 the encoder shafts and their holes. The lower board (ENC5 and the jacks) sits at its own offset,
 fitted from ENC5 and the scrub wheel's hole.
@@ -35,6 +36,8 @@ ENCODER_LEDS = {1: "LED3", 2: "LED4", 3: "LED5", 4: "LED2", 5: "LED6", 6: "LED10
 ENCODER5_SECOND_LED = "LED7"
 LINE_IN_JACK = "J_AUDIO_IN"
 PHONES_JACK = "J_HP_OUT"
+USB_SOCKET = "J1"  # USB-C, on the main board's front edge
+SD_SLOT = "P5"     # the micro-SD holder, also on the front edge
 
 TOLERANCE = 0.1  # mm, for anything that should line up exactly
 
@@ -232,6 +235,11 @@ class Layout:
         out["line_in_jack"] = to_screen(*on_lower(*self.origin(LINE_IN_JACK)))
         out["phones_jack"] = to_screen(*on_lower(*self.origin(PHONES_JACK)))
 
+        # The USB socket and the SD slot face the player, on the front edge. Their origins are the
+        # connectors' mouths, which stick out a little past the panel's outline.
+        out["usb_socket"] = to_screen(*self.on_panel(*self.origin(USB_SOCKET)))
+        out["sd_slot"] = to_screen(*self.on_panel(*self.origin(SD_SLOT)))
+
         toggle_x, toggle_y = self.on_panel(*self.origin("SW_NORMAL"))
         toggle = cutout_holding(toggle_x, toggle_y, "the toggle switch")
         out["toggle_slot"] = screen_rect(toggle)
@@ -307,6 +315,10 @@ def header(layout):
         "// The line-in and headphone jacks, on the right-hand side of the case.",
         f"constexpr Point kLineInJack = {tup(layout['line_in_jack'])};",
         f"constexpr Point kPhonesJack = {tup(layout['phones_jack'])};",
+        "",
+        "// The USB-C socket and the micro-SD slot, on the front edge (y past kHeight: they stick out).",
+        f"constexpr Point kUsbSocket = {tup(layout['usb_socket'])};",
+        f"constexpr Point kSdSlot    = {tup(layout['sd_slot'])};",
         "",
         array("Point", "kKeyboardCutout", layout["keyboard_cutout"],
               "The cut-out the white and black rows show through, corner by corner.", 4),

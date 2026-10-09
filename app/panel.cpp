@@ -43,6 +43,16 @@ layout::Circle LineInJack()
     return {layout::kLineInJack.x, layout::kLineInJack.y, kJack};
 }
 
+layout::Rect UsbSocket()
+{
+    return {layout::kUsbSocket.x - 4.5f, kFrontEdgeY - 1.4f, 9, 2.8f};
+}
+
+layout::Rect SdSlot()
+{
+    return {layout::kSdSlot.x - 6, kFrontEdgeY - 0.9f, 12, 1.8f};
+}
+
 Hit HitTest(float x, float y)
 {
     for(int k = 1; k <= kNumKeys; k++)
@@ -55,6 +65,11 @@ Hit HitTest(float x, float y)
         return {Hit::Kind::kToggle, 0};
     if(InCircle(LineInJack(), x, y))
         return {Hit::Kind::kLineIn, 0};
+    // Both are thin: take clicks a little round them too.
+    if(InRect(UsbSocket(), x, y, 1))
+        return {Hit::Kind::kUsb, 0};
+    if(InRect(SdSlot(), x, y, 1.5f))
+        return {Hit::Kind::kSdCard, 0};
     return {};
 }
 
@@ -66,6 +81,41 @@ float Light::Brightness() const
 Light LedLight(const daisycola::Rgb& led, int divisor)
 {
     return {Encode(led.r, divisor), Encode(led.g, divisor), Encode(led.b, divisor)};
+}
+
+float TurnGain(float rate)
+{
+    return std::clamp(rate / kAccelFrom, 1.0f, kMaxTurnGain);
+}
+
+int QueueTurn(PanelState& panel, int encoder, int detents)
+{
+    const int pending = panel.PendingDetents(encoder);
+    if(detents > 0)
+        detents = std::min(detents, std::max(0, kMaxPendingDetents - pending));
+    else if(detents < 0)
+        detents = std::max(detents, std::min(0, -kMaxPendingDetents - pending));
+    if(detents)
+        panel.TurnEncoder(encoder, detents);
+    return detents;
+}
+
+float TurnRate::Update(float detents, Clock::time_point now)
+{
+    using std::chrono::duration;
+    constexpr float kSmoothing = 0.05f, kPause = 0.15f; // seconds
+    const float     dt         = started_ ? duration<float>(now - last_).count() : kPause;
+    started_                   = true;
+    last_                      = now;
+    if(dt >= kPause)
+    {
+        rate_ = 0; // a fresh start: the first step is never accelerated
+        return rate_;
+    }
+    const float instant = std::abs(detents) / std::max(dt, 0.001f);
+    const float weight  = 1 - std::exp(-std::max(dt, 0.001f) / kSmoothing);
+    rate_ += (instant - rate_) * weight;
+    return rate_;
 }
 
 bool MouseControl::Press(float x, float y, Clock::time_point now)
@@ -80,7 +130,9 @@ bool MouseControl::Press(float x, float y, Clock::time_point now)
             EndClick();
             encoder_    = hit.index;
             start_y_    = y;
+            last_y_     = y;
             dragged_    = 0;
+            drag_rate_  = {};
             dragging_   = false;
             pushed_     = false;
             pressed_at_ = now;
@@ -90,6 +142,12 @@ bool MouseControl::Press(float x, float y, Clock::time_point now)
             return true;
         case Hit::Kind::kLineIn:
             panel_.SetLineIn(!panel_.LineIn());
+            return true;
+        case Hit::Kind::kUsb:
+            charger_.SetUsbPower(!charger_.UsbPower());
+            return true;
+        case Hit::Kind::kSdCard:
+            card_.SetInserted(!card_.Inserted());
             return true;
         case Hit::Kind::kNone:
             break;
@@ -103,10 +161,13 @@ void MouseControl::Move(float x, float y, Clock::time_point now)
         return;
     if(!dragging_ && std::abs(y - start_y_) < kDragStart)
         return;
-    dragging_       = true;
-    const int total = int((start_y_ - y) / kMmPerDetent);
-    Turn(encoder_, total - dragged_);
-    dragged_ = total;
+    dragging_          = true;
+    const float detents = (last_y_ - y) / kMmPerDetent;
+    last_y_             = y;
+    dragged_ += detents * TurnGain(drag_rate_.Update(detents, now));
+    const int whole = int(dragged_);
+    dragged_ -= whole;
+    Turn(encoder_, whole);
 }
 
 void MouseControl::Release(Clock::time_point now)
@@ -126,13 +187,24 @@ void MouseControl::Release(Clock::time_point now)
     key_ = encoder_ = 0;
 }
 
-bool MouseControl::Scroll(float x, float y, float steps)
+bool MouseControl::Scroll(float x, float y, float steps, Clock::time_point now)
 {
     const Hit hit = HitTest(x, y);
+    if(hit.kind == Hit::Kind::kUsb)
+    {
+        battery_scroll_ += steps;
+        const int whole = int(battery_scroll_);
+        battery_scroll_ -= whole;
+        const int mv = std::clamp(int(charger_.BatteryMillivolts()) + whole * int(kBatteryStepMv),
+                                  int(kBatteryMinMv), int(kBatteryFullMv));
+        charger_.SetBatteryMillivolts(uint32_t(mv));
+        charger_.SetChargeDone(uint32_t(mv) >= kBatteryFullMv);
+        return true;
+    }
     if(hit.kind != Hit::Kind::kEncoder)
         return false;
     // Smooth scrolling sends fractions of a step: add them up.
-    scroll_ += steps;
+    scroll_ += steps * TurnGain(scroll_rate_.Update(steps, now));
     const int detents = int(scroll_);
     scroll_ -= detents;
     Turn(hit.index, detents);
@@ -152,10 +224,7 @@ void MouseControl::Tick(Clock::time_point now)
 
 void MouseControl::Turn(int encoder, int detents)
 {
-    if(!detents)
-        return;
-    panel_.TurnEncoder(encoder, detents);
-    turned_[encoder - 1] += detents;
+    turned_[encoder - 1] += QueueTurn(panel_, encoder, detents);
 }
 
 void MouseControl::EndClick()

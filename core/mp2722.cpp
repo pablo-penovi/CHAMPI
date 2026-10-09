@@ -8,7 +8,7 @@ namespace
 {
 constexpr uint8_t kRegBattLow   = 0x0c;
 constexpr uint8_t kRegStatus0   = 0x11; // IINDPM_STAT in bit 0
-constexpr uint8_t kRegStatus1   = 0x12; // VIN_GD in bit 6, LEGACY_CABLE in bit 4
+constexpr uint8_t kRegStatus1   = 0x12; // VIN_GD in bit 6, VIN_RDY in bit 5, LEGACY_CABLE in bit 4
 constexpr uint8_t kRegStatus2   = 0x13; // CHG_STAT in bits 7:5
 constexpr uint8_t kRegStatus5   = 0x16; // BATT_LOW_STAT in bit 4
 constexpr uint8_t kChgStatDone  = 0b101;
@@ -79,7 +79,7 @@ uint8_t Mp2722::Register(uint8_t reg) const
         return 0;
     switch(reg)
     {
-        case kRegStatus1: return usb_power_.load() ? 1 << 6 : 0;
+        case kRegStatus1: return usb_power_.load() ? 1 << 6 | 1 << 5 : 0;
         case kRegStatus2: return charge_done_.load() ? kChgStatDone << 5 : 0;
         case kRegStatus5: return battery_mv_.load() < BattLowMillivolts() ? 1 << 4 : 0;
         default: return IsStatus(reg) ? 0 : regs_[reg].load();

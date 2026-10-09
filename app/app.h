@@ -14,6 +14,7 @@ struct AppOptions
     std::filesystem::path sd_image;
     std::filesystem::path skin_dir; // PNGs that replace the panel's logo and key glyphs
     Keymap                keymap = Keymap::Defaults();
+    bool                  test_mode = false; // ENC6 held at power-on: TAPE's factory test
 };
 
 /** $XDG_CONFIG_HOME/champi, or ~/.config/champi; empty if neither is set. */

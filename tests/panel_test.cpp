@@ -89,6 +89,27 @@ TEST(PanelHitTest, EveryControlIsUnderItsOwnCentre)
     const layout::Rect& t = layout::kToggleSlot;
     EXPECT_EQ(HitTest(t.x + t.w / 2, t.y + t.h / 2).kind, Kind::kToggle);
     EXPECT_EQ(HitTest(layout::kLineInJack.x, layout::kLineInJack.y).kind, Kind::kLineIn);
+    const layout::Rect u = champi::UsbSocket(), d = champi::SdSlot();
+    EXPECT_EQ(HitTest(u.x + u.w / 2, u.y + u.h / 2).kind, Kind::kUsb);
+    EXPECT_EQ(HitTest(d.x + d.w / 2, d.y + d.h / 2).kind, Kind::kSdCard);
+}
+
+TEST(PanelLayout, TheUsbSocketAndSdSlotSitOnTheFrontEdge)
+{
+    // Both connectors' mouths stick out past the outline; they're drawn just inside it, over
+    // them, and clear of the key numbers (at y = 99.6, 3.4 mm high).
+    for(const layout::Point& p : {layout::kUsbSocket, layout::kSdSlot})
+    {
+        EXPECT_GT(p.y, layout::kHeight);
+        EXPECT_LT(p.y, layout::kHeight + 6);
+    }
+    EXPECT_LT(layout::kUsbSocket.x, layout::kKey[1].x) << "at the left, by KEY1";
+    EXPECT_GT(layout::kSdSlot.x, layout::kKey[11].x) << "at the right, by KEY12-13";
+    for(const layout::Rect& r : {champi::UsbSocket(), champi::SdSlot()})
+    {
+        EXPECT_GT(r.y, 99.6f + 1.7f);
+        EXPECT_LE(r.y + r.h, layout::kHeight);
+    }
 }
 
 TEST(PanelHitTest, EdgesAndGaps)
@@ -135,7 +156,7 @@ class PanelMouse : public ::testing::Test
     }
     static void TearDownTestSuite() { daisycola::UseManualClock(false); }
 
-    void SetUp() override { mouse_ = std::make_unique<MouseControl>(panel_); }
+    void SetUp() override { mouse_ = std::make_unique<MouseControl>(panel_, charger_, card_); }
 
     void TearDown() override
     {
@@ -147,11 +168,17 @@ class PanelMouse : public ::testing::Test
         }
         panel_.SetToggle(true);
         panel_.SetLineIn(false);
+        card_.SetInserted(true);
     }
 
     Clock::time_point At(int ms) const { return t0_ + std::chrono::milliseconds(ms); }
 
+    // Drags and wheel turns this far apart are each a fresh start, so never accelerated.
+    static constexpr int kSlow = 200;
+
     static champi::PanelState     panel_;
+    champi::Mp2722                charger_;
+    champi::CardSlot              card_;
     std::unique_ptr<MouseControl> mouse_;
     const Clock::time_point       t0_ = Clock::now();
 };
@@ -178,9 +205,9 @@ TEST_F(PanelMouse, DraggingUpTurnsClockwise)
     mouse_->Press(e.x, e.y, At(0));
     mouse_->Move(e.x, e.y - 0.5f, At(10)); // not a drag yet
     EXPECT_EQ(panel_.PendingDetents(4), 0);
-    mouse_->Move(e.x, e.y - 5 * MouseControl::kMmPerDetent, At(20));
+    mouse_->Move(e.x, e.y - 5 * MouseControl::kMmPerDetent, At(kSlow));
     EXPECT_EQ(panel_.PendingDetents(4), 5);
-    mouse_->Move(e.x, e.y - 2 * MouseControl::kMmPerDetent, At(30));
+    mouse_->Move(e.x, e.y - 2 * MouseControl::kMmPerDetent, At(2 * kSlow));
     EXPECT_EQ(panel_.PendingDetents(4), 2);
     mouse_->Move(e.x + 40, e.y + 3 * MouseControl::kMmPerDetent, At(1000)); // anywhere on screen
     EXPECT_EQ(panel_.PendingDetents(4), -3);
@@ -190,6 +217,54 @@ TEST_F(PanelMouse, DraggingUpTurnsClockwise)
     EXPECT_FALSE(panel_.EncoderPushed(4)); // a drag never pushes
     mouse_->Tick(At(2000));
     EXPECT_FALSE(panel_.EncoderPushed(4));
+}
+
+TEST_F(PanelMouse, DraggingFastCoversMoreGround)
+{
+    // 40 mm in 20 steps of 5 ms: 400 detents a second, so the full gain. The board plays them out
+    // as they come (the queue is emptied after each step), so the cap doesn't get in the way.
+    const layout::Circle& e = layout::kEncoder[0];
+    mouse_->Press(e.x, e.y, At(0));
+    for(int i = 1; i <= 20; i++)
+    {
+        mouse_->Move(e.x, e.y - 2.0f * i, At(5 * i));
+        panel_.TurnEncoder(1, -panel_.PendingDetents(1));
+    }
+    mouse_->Release(At(200));
+    const int slow = int(40 / MouseControl::kMmPerDetent);
+    EXPECT_GT(mouse_->Turned(1), 3 * slow);
+    EXPECT_LE(mouse_->Turned(1), int(champi::kMaxTurnGain) * slow);
+}
+
+TEST_F(PanelMouse, ATurnQueuesNoFurtherThanTheBoardKeepsUp)
+{
+    // The manual clock stands still, so nothing plays out: the queue fills and stops.
+    const layout::Circle& e = layout::kEncoder[1];
+    mouse_->Press(e.x, e.y, At(0));
+    mouse_->Move(e.x, e.y - 30 * MouseControl::kMmPerDetent, At(kSlow));
+    EXPECT_EQ(panel_.PendingDetents(2), champi::kMaxPendingDetents);
+    EXPECT_EQ(mouse_->Turned(2), champi::kMaxPendingDetents);
+    // Turning back gets through at once.
+    mouse_->Move(e.x, e.y - 25 * MouseControl::kMmPerDetent, At(2 * kSlow));
+    EXPECT_EQ(panel_.PendingDetents(2), champi::kMaxPendingDetents - 5);
+    mouse_->Release(At(3 * kSlow));
+}
+
+TEST(PanelTurnFeel, GainGrowsWithTheRate)
+{
+    EXPECT_EQ(champi::TurnGain(0), 1);
+    EXPECT_EQ(champi::TurnGain(champi::kAccelFrom), 1);
+    EXPECT_NEAR(champi::TurnGain(2 * champi::kAccelFrom), 2, 1e-5);
+    EXPECT_EQ(champi::TurnGain(1000), champi::kMaxTurnGain);
+
+    champi::TurnRate rate;
+    const auto       t0 = champi::TurnRate::Clock::now();
+    EXPECT_EQ(rate.Update(1, t0), 0) << "a first step has no rate";
+    float r = 0;
+    for(int i = 1; i <= 20; i++)
+        r = rate.Update(1, t0 + std::chrono::milliseconds(10 * i)); // 100 a second
+    EXPECT_NEAR(r, 100, 5);
+    EXPECT_EQ(rate.Update(1, t0 + std::chrono::milliseconds(1000)), 0) << "a pause starts again";
 }
 
 TEST_F(PanelMouse, AClickPushesBriefly)
@@ -220,7 +295,7 @@ TEST_F(PanelMouse, HoldingStillKeepsItPushed)
     EXPECT_TRUE(panel_.EncoderPushed(6));
 
     // Dragging now turns it while it stays pushed.
-    mouse_->Move(e.x, e.y - 3 * MouseControl::kMmPerDetent, At(5100));
+    mouse_->Move(e.x, e.y - 3 * MouseControl::kMmPerDetent, At(5100)); // a first step: not accelerated
     EXPECT_EQ(panel_.PendingDetents(6), 3);
     EXPECT_TRUE(panel_.EncoderPushed(6));
 
@@ -244,21 +319,31 @@ TEST_F(PanelMouse, APressEndsTheLastClick)
 TEST_F(PanelMouse, TheWheelTurnsWhatItsOver)
 {
     const layout::Circle& e = layout::kEncoder[4];
-    EXPECT_TRUE(mouse_->Scroll(e.x + 10, e.y, 1));
-    EXPECT_TRUE(mouse_->Scroll(e.x, e.y, 1));
+    int                   t = 0;
+    auto                  next = [&] { return At(t += kSlow); };
+    EXPECT_TRUE(mouse_->Scroll(e.x + 10, e.y, 1, next()));
+    EXPECT_TRUE(mouse_->Scroll(e.x, e.y, 1, next()));
     EXPECT_EQ(panel_.PendingDetents(5), 2);
-    EXPECT_TRUE(mouse_->Scroll(e.x, e.y, -3));
+    EXPECT_TRUE(mouse_->Scroll(e.x, e.y, -3, next()));
     EXPECT_EQ(panel_.PendingDetents(5), -1);
 
     // Smooth scrolling: fractions add up to a detent.
-    mouse_->Scroll(e.x, e.y, 0.4f);
-    mouse_->Scroll(e.x, e.y, 0.4f);
+    mouse_->Scroll(e.x, e.y, 0.4f, next());
+    mouse_->Scroll(e.x, e.y, 0.4f, next());
     EXPECT_EQ(panel_.PendingDetents(5), -1);
-    mouse_->Scroll(e.x, e.y, 0.4f);
+    mouse_->Scroll(e.x, e.y, 0.4f, next());
     EXPECT_EQ(panel_.PendingDetents(5), 0);
     EXPECT_EQ(mouse_->Turned(5), 0);
 
-    EXPECT_FALSE(mouse_->Scroll(layout::kKey[0].x, layout::kKey[0].y, 1));
+    // A fast spin counts for more. The board plays each step out before the next.
+    for(int i = 0; i < 20; i++)
+    {
+        mouse_->Scroll(e.x, e.y, 1, At(t += 10)); // 100 steps a second
+        panel_.TurnEncoder(5, -panel_.PendingDetents(5));
+    }
+    EXPECT_GT(mouse_->Turned(5), 40);
+
+    EXPECT_FALSE(mouse_->Scroll(layout::kKey[0].x, layout::kKey[0].y, 1, next()));
 }
 
 TEST_F(PanelMouse, TheToggleAndTheJackFlipOnAClick)
@@ -278,6 +363,37 @@ TEST_F(PanelMouse, TheToggleAndTheJackFlipOnAClick)
     mouse_->Release(At(50));
     mouse_->Press(layout::kLineInJack.x, layout::kLineInJack.y, At(60));
     EXPECT_FALSE(panel_.LineIn());
+}
+
+TEST_F(PanelMouse, UsbPlugsTheSdCardPullsAndTheWheelSetsTheBattery)
+{
+    const layout::Rect u = champi::UsbSocket(), d = champi::SdSlot();
+    ASSERT_TRUE(charger_.UsbPower());
+    mouse_->Press(u.x + 1, u.y + 1, At(0));
+    mouse_->Release(At(10));
+    EXPECT_FALSE(charger_.UsbPower());
+    mouse_->Press(u.x + 1, u.y + 1, At(20));
+    EXPECT_TRUE(charger_.UsbPower());
+    mouse_->Release(At(30));
+
+    ASSERT_TRUE(card_.Inserted());
+    mouse_->Press(d.x + 1, d.y + 1, At(40));
+    EXPECT_FALSE(card_.Inserted());
+    mouse_->Release(At(50));
+    mouse_->Press(d.x + 1, d.y + 1, At(60));
+    EXPECT_TRUE(card_.Inserted());
+    mouse_->Release(At(70));
+
+    // A step is 100 mV, between 2.8 V and full at 4.2 V, which is when charging is done.
+    charger_.SetBatteryMillivolts(4100);
+    EXPECT_TRUE(mouse_->Scroll(u.x + 1, u.y + 1, -3, At(100)));
+    EXPECT_EQ(charger_.BatteryMillivolts(), 3800u);
+    EXPECT_FALSE(charger_.ChargeDone());
+    mouse_->Scroll(u.x + 1, u.y + 1, -30, At(200));
+    EXPECT_EQ(charger_.BatteryMillivolts(), champi::kBatteryMinMv);
+    mouse_->Scroll(u.x + 1, u.y + 1, 30, At(300));
+    EXPECT_EQ(charger_.BatteryMillivolts(), champi::kBatteryFullMv);
+    EXPECT_TRUE(charger_.ChargeDone());
 }
 
 TEST_F(PanelMouse, ClicksOnNothingAreIgnored)

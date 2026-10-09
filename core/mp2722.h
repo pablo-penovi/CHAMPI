@@ -1,7 +1,8 @@
 // The MP2722 battery charger on the CHOMPI's I2C bus, as a register model.
 //
-// TAPE reads the six status registers from 0x11 and looks at four bits: IINDPM_STAT (0x11 bit 0),
-// VIN_GD (0x12 bit 6), LEGACY_CABLE (0x12 bit 4), CHG_STAT (0x13 bits 7:5, 0b101 = charge done)
+// TAPE reads the six status registers from 0x11 and looks at these bits: IINDPM_STAT (0x11 bit 0),
+// VIN_GD (0x12 bit 6), VIN_RDY (0x12 bit 5, in test mode only), LEGACY_CABLE (0x12 bit 4),
+// CHG_STAT (0x13 bits 7:5, 0b101 = charge done), the fault bits of 0x14 (test mode: all clear)
 // and BATT_LOW_STAT (0x16 bit 4). It moves the BATT_LOW threshold in register 0x0C between 3.0 V
 // and 3.3 V to tell a medium battery from a high one, and writes 0x08 to enter shipping mode.
 // The model computes those status bits from a power state the host sets; other registers just
@@ -32,7 +33,7 @@ class Mp2722 : public daisycola::I2CDevice
      *  process, before the firmware starts. */
     void Attach();
 
-    /** Power on the USB input (VIN_GD). */
+    /** Power on the USB input (VIN_GD and VIN_RDY). */
     void     SetUsbPower(bool on);
     bool     UsbPower() const;
 

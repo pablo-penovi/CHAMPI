@@ -1,5 +1,7 @@
 #include "keyboard.h"
 
+#include "panel.h"
+
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
@@ -72,6 +74,8 @@ std::vector<Action> AllActions()
         all.push_back({K::kKey, k});
     all.push_back({K::kToggle, 0});
     all.push_back({K::kLineIn, 0});
+    all.push_back({K::kUsb, 0});
+    all.push_back({K::kSdCard, 0});
     for(int e = 1; e <= kNumEncoders; e++)
         all.push_back({K::kSelectEncoder, e});
     all.push_back({K::kTurnLeft, 0});
@@ -252,6 +256,8 @@ std::string ActionName(const Action& a)
         case K::kPush: return "push";
         case K::kToggle: return "toggle";
         case K::kLineIn: return "line_in";
+        case K::kUsb: return "usb";
+        case K::kSdCard: return "sd_card";
         case K::kNone: break;
     }
     return "none";
@@ -282,6 +288,8 @@ Keymap Keymap::Defaults()
     m.Bind(KEY_SPACE, {K::kKey, kPlayKey});
     m.Bind(KEY_ENTER, {K::kKey, kLoopKey});
     m.Bind(KEY_GRAVE, {K::kToggle, 0});
+    m.Bind(KEY_F9, {K::kSdCard, 0});
+    m.Bind(KEY_F10, {K::kUsb, 0});
     m.Bind(KEY_F12, {K::kLineIn, 0});
 
     // F1-F6 pick the encoders in the order they sit on the panel, left to right.
@@ -404,8 +412,9 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
         case K::kTurnLeft:
         case K::kTurnRight:
             repeat_key_  = code;
-            repeat_dir_  = action.kind == K::kTurnRight ? 1 : -1;
-            next_repeat_ = now + kRepeatDelay;
+            repeat_dir_     = action.kind == K::kTurnRight ? 1 : -1;
+            repeat_pressed_ = now;
+            next_repeat_    = now + kRepeatDelay;
             Turn(repeat_dir_);
             break;
         case K::kPush:
@@ -417,6 +426,12 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
             break;
         case K::kLineIn:
             panel_.SetLineIn(!panel_.LineIn());
+            break;
+        case K::kUsb:
+            charger_.SetUsbPower(!charger_.UsbPower());
+            break;
+        case K::kSdCard:
+            card_.SetInserted(!card_.Inserted());
             break;
         case K::kNone:
             break;
@@ -463,15 +478,15 @@ void KeyboardControl::Tick(Clock::time_point now)
 {
     if(repeat_key_ < 0 || now < next_repeat_)
         return;
-    Turn(repeat_dir_);
+    const auto held = now - repeat_pressed_;
+    Turn(repeat_dir_ * (held >= kRepeatFastest ? 4 : held >= kRepeatFaster ? 2 : 1));
     // A late tick turns once, not by every repeat it missed.
     next_repeat_ = std::max(next_repeat_ + kRepeatEvery, now);
 }
 
 void KeyboardControl::Turn(int detents)
 {
-    panel_.TurnEncoder(selected_, detents);
-    turned_[selected_ - 1] += detents;
+    turned_[selected_ - 1] += QueueTurn(panel_, selected_, detents);
 }
 
 } // namespace champi
