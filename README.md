@@ -16,7 +16,7 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 Early work: the real TAPE firmware runs on daisycola's virtual MCU, from a virtual SD card, with
 the CHOMPI board model (panel wiring, battery charger, LED layout) around it. `champi` plays it
 through JACK or PipeWire with MIDI in and out, on a vector panel laid out from the board files and
-played with the mouse. `champi-headless` plays
+played with the mouse or the computer keyboard. `champi-headless` plays
 it from a script and records the audio and LEDs. The work is split into chunks, each ending in
 something that builds and has tests. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
@@ -83,13 +83,38 @@ little latency, so it's better to run the graph at 48 kHz. For a 64-frame buffer
 PIPEWIRE_QUANTUM=64/48000 build/bin/champi
 ```
 
-The panel is laid out from the CHOMPI board files and plays by mouse:
+The panel is laid out from the CHOMPI board files and plays by mouse or keyboard. With the mouse:
 
 - Click and hold a key to play it.
 - Drag an encoder up or down to turn it (up is clockwise), or scroll over it. Click it to push it;
   hold the button still for a moment to keep it pushed, then drag to turn it while pushed.
 - Click the toggle switch to flip it (lever up is on), and the jack at the right edge to plug or
   unplug line in. Without a plug the firmware records from the mic.
+
+From the keyboard, by default:
+
+| Keys | Panel |
+|---|---|
+| `Z X C V B N M`, `Q W E R T Y U I` | white keys 1–7 and 8–15 |
+| `S D G H J`, `2 3 5 6 7` | the black keys, as on a tracker |
+| `Tab`, `Space`, `Enter` | CHOMPI, play, loop |
+| `F1`–`F6` | select an encoder, left to right (`F1` is the speed knob, `F5` the scrub wheel) |
+| `←` `→` or `[` `]` | turn the selected encoder (hold to keep turning) |
+| `\` | push the selected encoder while held |
+| `` ` ``, `F12` | flip the toggle switch, plug or unplug line in |
+
+The keys are physical, named as on a US keyboard: on other layouts they're the keys in the same
+places. Once the keyboard has been used, a ring marks the selected encoder. To change the keys,
+start from the defaults:
+
+```sh
+build/bin/champi --print-keymap > ~/.config/champi/keymap.toml
+```
+
+and edit it. Each line sets an action to a key, a list of keys or `[]`, as in
+`turn_left = ["Left", "Minus"]`. Lines can be left out: whatever the file doesn't name keeps its
+default. A key with no name can be given by its Linux scancode. `--keymap <file>` reads another
+file.
 
 The window keeps the panel's proportions. A skin folder can replace the logo and the glyphs on the
 CHOMPI, play and loop keys with your own art: `logo.png`, `chompi.png`, `play.png` and `loop.png`

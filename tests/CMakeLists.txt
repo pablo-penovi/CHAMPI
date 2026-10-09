@@ -49,6 +49,11 @@ add_executable(champi-panel-tests panel_test.cpp)
 target_link_libraries(champi-panel-tests PRIVATE champi_panel champi_warnings GTest::gtest_main)
 gtest_discover_tests(champi-panel-tests DISCOVERY_MODE PRE_TEST)
 
+# The computer keyboard: the keymap and keymap.toml, and every key into a PanelState of its own.
+add_executable(champi-keyboard-tests keyboard_test.cpp)
+target_link_libraries(champi-keyboard-tests PRIVATE champi_panel champi_warnings GTest::gtest_main)
+gtest_discover_tests(champi-keyboard-tests DISCOVERY_MODE PRE_TEST)
+
 # app/panel_layout.h must be what the extractor makes from the board files.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)

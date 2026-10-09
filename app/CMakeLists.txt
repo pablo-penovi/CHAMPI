@@ -3,8 +3,9 @@
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
 
-# The panel's layout, hit-testing, LED look and mouse handling: no DPF, so the tests can use it.
-add_library(champi_panel STATIC panel.cpp)
+# The panel's layout, hit-testing, LED look, mouse and keyboard handling: no DPF, so the tests can
+# use it.
+add_library(champi_panel STATIC panel.cpp keyboard.cpp)
 target_include_directories(champi_panel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_panel PUBLIC champi_board PRIVATE champi_warnings)
 
@@ -22,4 +23,4 @@ target_link_libraries(champi-ui PRIVATE champi_panel champi_warnings)
 set_source_files_properties(${DPF_ROOT_DIR}/distrho/DistrhoPluginMain.cpp
     PROPERTIES COMPILE_DEFINITIONS main=dpf_jack_main)
 target_sources(champi-jack PRIVATE main.cpp jack_monitor.cpp)
-target_link_libraries(champi-jack PRIVATE champi_sd PkgConfig::JACK)
+target_link_libraries(champi-jack PRIVATE champi_sd champi_panel PkgConfig::JACK)

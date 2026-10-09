@@ -342,6 +342,34 @@ CHAMPI/
 - `~/.config/champi/keymap.toml`.
 - Encoder select, turn and push from the keyboard.
 - **Done when:** everything on the panel can be played without the mouse.
+- As built:
+  - `app/keyboard.{h,cpp}` (in `champi_panel`, no DPF) holds the `Keymap` and `KeyboardControl`,
+    alongside `MouseControl`. Keys are Linux evdev scancodes named as on a US keyboard; DPF's
+    `keycode` on X11 is the scancode plus 8. DPF only has an X11 backend on Linux, so this holds
+    under XWayland too.
+  - The defaults are the detailed plan's §4, plus two things it left open. F1-F6 pick the encoders
+    left to right as they sit on the panel (ENC4, 1, 2, 3, 5, 6), not by board number, so F1 is the
+    speed knob. Line in, which §4 has no key for, is `F12`. ENC4 is selected at start.
+  - `keymap.toml` is a small subset of TOML, parsed in-house: `action = "Key"`, a scancode number,
+    or a list (`[]` unbinds). Actions are `key_1`-`key_25`, `chompi`, `play`, `loop`, `toggle`,
+    `line_in`, `encoder_1`-`encoder_6`, `turn_left`, `turn_right` and `push`. It overrides the
+    defaults action by action: an action it names loses its default keys, and a key it names leaves
+    its old action. A typo, an unknown key or a key set twice is an error with the line number, and
+    `champi` exits on it. `--keymap <file>` reads another file and `--print-keymap` writes the one
+    in use, as a starting point. The skin and keymap now share `ConfigDir()`.
+  - Panel keys play while held; two computer keys on one panel key hold it until both are up. The
+    turn keys turn once, then repeat every 50 ms after 300 ms. The window's own key repeat is off
+    (`setIgnoringKeyRepeat`), since X11 repeats as release-and-press pairs that would retrigger
+    notes. The push key holds the encoder it pushed even if another is selected meanwhile, so
+    push-and-turn works. Losing focus releases everything.
+  - The knobs' pointers add up mouse and keyboard turns. A cream ring marks the selected encoder,
+    but only once the keyboard has been used.
+  - Tests: `champi-keyboard-tests`, its own program for its own `PanelState`. It checks the
+    default keymap against the board (each black key between the white keys its computer keys
+    flank, F1-F6 left to right), the TOML parsing and errors, the round trip through
+    `--print-keymap`, and every key into a real `PanelState`. It passes under ASan and TSan.
+  - Still manual: playing it from the keyboard on a real desktop. There was no Xvfb or xdotool to
+    inject keys into the running app.
 
 ### 8. Fidelity and polish (milestone 5 of the detailed plan)
 - Check the shift-menu flows, the looper, and recording through mic and line-in.
