@@ -120,6 +120,21 @@ TEST(HostAudio, MapsChannelsAt48k)
     EXPECT_EQ(b.out[3][10], 2.f);
 }
 
+TEST(HostAudio, AppliesInputGains)
+{
+    HostAudio audio(MicToMaster);
+    audio.Prepare(48000, 64);
+    Buffers b(64);
+    std::fill(b.in[0].begin(), b.in[0].end(), 0.5f);
+
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[0][10], 0.5f);
+    audio.SetInputGain(0, 0.25f);
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[0][10], 0.125f);
+    EXPECT_EQ(b.in[0][10], 0.5f) << "the host's buffer is left alone";
+}
+
 TEST(HostAudio, CountsLateBlocksOnceRunning)
 {
     HostAudio audio(Constants);

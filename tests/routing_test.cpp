@@ -1,5 +1,5 @@
-// The connections: the routing model against a fake JACK, connections.toml, and the connections
-// menu's navigation and hit-testing.
+// The connections: the routing model against a fake JACK, connections.toml, input_levels.toml,
+// and the connections menu's navigation and hit-testing.
 #include <algorithm>
 #include <stdexcept>
 #include <gtest/gtest.h>
@@ -447,7 +447,7 @@ TEST(ConnectionsMenu, APairRowListsPairsByClientAndAMonoPortGetsBothSides)
     jack.Add("Mono:playback_MONO", PortType::kAudio, false, true);
     ConnectionsMenu menu;
     menu.SetSnapshot(Snapshot(jack));
-    menu.Move(1, 0); // Outputs: Master
+    menu.SwitchColumn(); // Outputs: Master
     menu.Activate();
     ASSERT_TRUE(menu.InPeers());
     EXPECT_EQ(Lines(menu), (std::vector<std::string>{"[ ] Route left and right separately", "Card",
@@ -501,7 +501,7 @@ TEST(ConnectionsMenu, OneSideConnectedSplitsThePair)
     ConnectionsMenu menu;
     menu.SetSnapshot(Snapshot(jack));
     EXPECT_EQ(Labels(menu.Column(1)), (std::vector<std::string>{"Master L", "Master R", "Phones", "MIDI out"}));
-    menu.Move(1, 0);
+    menu.SwitchColumn();
     menu.Activate();
     EXPECT_EQ(Lines(menu), (std::vector<std::string>{"[x] Route left and right separately", "Card",
                                                      "[x] playback_FL", "[ ] playback_FR", "Other",
@@ -547,7 +547,7 @@ TEST(ConnectionsMenu, SavedPeersThatArentThereAreListedLast)
     menu.SetSnapshot(Snapshot(jack, Routing({{champi::kMasterL, {"Gone:playback_1", "Card:playback_FL"}},
                                              {champi::kMasterR, {"Gone:playback_1"}}})));
     EXPECT_EQ(menu.Column(1)[0].missing, 1);
-    menu.Move(1, 0);
+    menu.SwitchColumn();
     menu.Activate();
     const auto lines = Lines(menu);
     EXPECT_EQ(lines[lines.size() - 2], "Saved, not connected now");
@@ -655,7 +655,8 @@ TEST(ConnectionsMenu, ALongListScrolls)
         jack.Add("Many:in_" + std::to_string(i), PortType::kMidi, false);
     ConnectionsMenu menu;
     menu.SetSnapshot(Snapshot(jack));
-    menu.Move(1, 2);
+    menu.SwitchColumn();
+    menu.Move(0, 2);
     menu.Activate();
     const int lines = ConnectionsMenu::VisibleLines();
     ASSERT_GT(lines, 5);
@@ -681,4 +682,113 @@ TEST(ConnectionsMenu, ALongListScrolls)
     menu.Page(1);
     menu.Page(1);
     EXPECT_EQ(menu.SelectedItem(), int(menu.Items().size()) - 1);
+}
+
+TEST(ConnectionsMenu, LeftAndRightSetTheSelectedInputsVolume)
+{
+    FakeJack        jack;
+    ConnectionsMenu menu;
+    menu.SetSnapshot(Snapshot(jack));
+    const auto& levels = menu.Levels().percent;
+
+    // The mic: left and right step its volume, and stop at the ends.
+    menu.Move(-1, 0);
+    EXPECT_EQ(levels[champi::kMic], 95);
+    EXPECT_EQ(menu.SelectedColumn(), 0);
+    menu.Move(1, 0);
+    menu.Move(1, 0);
+    EXPECT_EQ(levels[champi::kMic], 100);
+    EXPECT_EQ(menu.SelectedColumn(), 0);
+
+    // Line in moves both sides; split, each side has its own.
+    menu.Move(0, 1);
+    menu.Move(-1, 0);
+    EXPECT_EQ(levels[champi::kLineL], 95);
+    EXPECT_EQ(levels[champi::kLineR], 95);
+    menu.Activate(); // the split line
+    menu.Activate();
+    ASSERT_EQ(Labels(menu.Column(0)), (std::vector<std::string>{"Mic", "Line in L", "Line in R", "MIDI in"}));
+    menu.Move(0, 1);
+    menu.Move(-1, 0);
+    EXPECT_EQ(levels[champi::kLineL], 95);
+    EXPECT_EQ(levels[champi::kLineR], 90);
+
+    // MIDI in has no volume: right goes to the outputs, and left comes back. Tab always switches.
+    menu.Move(0, 1);
+    EXPECT_FALSE(ConnectionsMenu::HasLevel(menu.OpenRow()));
+    menu.Move(1, 0);
+    EXPECT_EQ(menu.SelectedColumn(), 1);
+    menu.Move(-1, 0);
+    EXPECT_EQ(menu.SelectedColumn(), 0);
+    menu.Move(0, -9);
+    menu.SwitchColumn();
+    EXPECT_EQ(menu.SelectedColumn(), 1);
+    menu.SwitchColumn();
+    EXPECT_EQ(menu.SelectedColumn(), 0);
+    EXPECT_EQ(levels[champi::kMic], 100);
+}
+
+TEST(ConnectionsMenu, AClickOnTheVolumeBarSetsIt)
+{
+    FakeJack        jack;
+    ConnectionsMenu menu;
+    menu.SetSnapshot(Snapshot(jack));
+    const champi::layout::Rect bar = ConnectionsMenu::LevelRect(0, 0);
+    EXPECT_TRUE(menu.Click(bar.x + bar.w * 0.3f, bar.y + bar.h / 2).empty());
+    EXPECT_FALSE(menu.InPeers());
+    EXPECT_EQ(menu.Levels().percent[champi::kMic], 30);
+    menu.Click(bar.x - 0.5f, bar.y);
+    EXPECT_EQ(menu.Levels().percent[champi::kMic], 0);
+
+    // Elsewhere on the row opens it.
+    auto [rx, ry] = Centre(ConnectionsMenu::RowRect(0, 0));
+    menu.Click(rx - 30, ry);
+    EXPECT_TRUE(menu.InPeers());
+}
+
+// ---- input_levels.toml ----------------------------------------------------------------------------
+
+TEST(InputLevelsToml, RoundTripsAndDefaultsTo100)
+{
+    using champi::InputLevels;
+    InputLevels levels;
+    levels.percent = {60, 100, 35};
+    EXPECT_EQ(InputLevels::Parse(levels.ToToml()), levels);
+    EXPECT_EQ(InputLevels::Parse("line_r = 35\nmic = 60 # quieter\n"), levels);
+    EXPECT_EQ(InputLevels::Parse(""), InputLevels{});
+    EXPECT_FLOAT_EQ(InputLevels::Gain(100), 1.f);
+    EXPECT_FLOAT_EQ(InputLevels::Gain(50), 0.125f);
+    EXPECT_FLOAT_EQ(InputLevels::Gain(0), 0.f);
+}
+
+TEST(InputLevelsToml, ErrorsNameTheLine)
+{
+    using champi::InputLevels;
+    auto error = [](const char* toml) {
+        try
+        {
+            InputLevels::Parse(toml, "input_levels.toml");
+        }
+        catch(const std::runtime_error& e)
+        {
+            return std::string(e.what());
+        }
+        return std::string();
+    };
+    EXPECT_EQ(error("mic = 50\nmaster_l = 3"), "input_levels.toml:2: CHAMPI has no audio input called \"master_l\"");
+    EXPECT_EQ(error("mic = 50\nmic = 3"), "input_levels.toml:2: mic is set twice");
+    EXPECT_EQ(error("mic = 101"), "input_levels.toml:1: a volume is a number from 0 to 100");
+    EXPECT_EQ(error("mic = \"50\""), "input_levels.toml:1: a volume is a number from 0 to 100");
+}
+
+TEST(InputLevelsToml, SavesAndLoads)
+{
+    using champi::InputLevels;
+    TempDir    dir;
+    const auto path = dir / "config/champi/input_levels.toml";
+    EXPECT_FALSE(InputLevels::Load(path));
+    InputLevels levels;
+    levels.percent[champi::kMic] = 45;
+    levels.Save(path);
+    EXPECT_EQ(InputLevels::Load(path), levels);
 }

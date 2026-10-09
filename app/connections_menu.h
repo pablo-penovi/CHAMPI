@@ -6,6 +6,9 @@
 // client, each with a checkbox; a pair row ticks L to L and R to R, or both sides to a mono port.
 // Saved peers that aren't there are listed last, greyed, and unticking one forgets it.
 //
+// The selected audio input row also shows its volume, as a bar the left and right arrows or a
+// click move; the other rows switch columns with them. Tab always switches.
+//
 // Everything is in panel millimetres, like the panel it's drawn over.
 #pragma once
 
@@ -14,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "input_levels.h"
 #include "panel_layout.h"
 #include "routing.h"
 
@@ -89,6 +93,16 @@ class ConnectionsMenu
     int SelectedRow() const { return row_; }
     static layout::Rect RowRect(int column, int row);
 
+    /** Whether a row has a volume: the mic and line in. */
+    static bool HasLevel(const Row& row);
+    /** A row's volume: its first port's. */
+    int RowLevel(const Row& row) const { return levels_.percent[row.ports[0]]; }
+    /** The volume bar on a row, drawn while the row is selected. */
+    static layout::Rect LevelRect(int column, int row);
+
+    void               SetLevels(const InputLevels& levels) { levels_ = levels; }
+    const InputLevels& Levels() const { return levels_; }
+
     /** The second level: the row that's open and its lines. */
     const Row&               OpenRow() const { return columns_[column_][row_]; }
     const std::vector<Item>& Items() const { return items_; }
@@ -100,6 +114,7 @@ class ConnectionsMenu
 
     // Keys. Each returns the connections to change, if any.
     void                     Move(int dx, int dy); // arrows
+    void                     SwitchColumn();       // Tab
     void                     Page(int dir);        // page up and down
     std::vector<RouteChange> Activate();           // Enter or Space: open a row, or tick
     /** Esc: back a level. False if it was on the first level already, so the menu closes. */
@@ -116,6 +131,7 @@ class ConnectionsMenu
     void              SelectNext(int from, int dir);
     void              EnsureVisible();
     void              SelectPortRow(int champi);
+    void              SetRowLevel(const Row& row, int percent);
 
     RoutingSnapshot                  snapshot_;
     std::array<bool, kNumPairs>      split_{};
@@ -126,6 +142,7 @@ class ConnectionsMenu
     std::vector<Item>                items_;
     int                              item_   = 0;
     int                              scroll_ = 0;
+    InputLevels                      levels_;
 };
 
 } // namespace champi

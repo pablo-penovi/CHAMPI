@@ -130,6 +130,13 @@ int main(int argc, char** argv)
         if(!connections.empty())
             saved = SavedRouting::Load(connections);
 
+        if(!config.empty())
+        {
+            Options().input_levels_path = config / "input_levels.toml";
+            if(auto levels = InputLevels::Load(Options().input_levels_path))
+                Options().input_levels = *levels;
+        }
+
         const SdOptions sd = ParseSdOptions(args);
         RunSdCommands(sd);
         if(sd.HasCommands())

@@ -40,6 +40,24 @@ layout::Rect ConnectionsMenu::RowRect(int column, int row)
     return {kBox.x + kPad + column * (w + kPad), kBodyY + row * (kRowHeight + kRowGap), w, kRowHeight};
 }
 
+bool ConnectionsMenu::HasLevel(const Row& row)
+{
+    const ChampiPort& port = kChampiPorts[row.ports[0]];
+    return port.input && port.type == PortType::kAudio;
+}
+
+layout::Rect ConnectionsMenu::LevelRect(int column, int row)
+{
+    const layout::Rect r = RowRect(column, row);
+    return {r.x + r.w - 43, r.y + 8.2f, 40, 2.4f};
+}
+
+void ConnectionsMenu::SetRowLevel(const Row& row, int percent)
+{
+    for(int port : row.ports)
+        levels_.percent[port] = std::clamp(percent, 0, InputLevels::kMax);
+}
+
 layout::Rect ConnectionsMenu::ItemRect(int item) const
 {
     return {kList.x, kList.y + (item - scroll_) * kLineHeight, kList.w, kLineHeight};
@@ -285,7 +303,10 @@ void ConnectionsMenu::Move(int dx, int dy)
 {
     if(!in_peers_)
     {
-        if(dx)
+        const Row& row = columns_[column_][row_];
+        if(dx && HasLevel(row))
+            SetRowLevel(row, RowLevel(row) + dx * InputLevels::kStep);
+        else if(dx)
             column_ = std::clamp(column_ + dx, 0, 1);
         row_ = std::clamp(row_ + dy, 0, int(columns_[column_].size()) - 1);
         return;
@@ -301,6 +322,14 @@ void ConnectionsMenu::Move(int dx, int dy)
             }
         EnsureVisible();
     }
+}
+
+void ConnectionsMenu::SwitchColumn()
+{
+    if(in_peers_)
+        return;
+    column_ = 1 - column_;
+    row_    = std::min(row_, int(columns_[column_].size()) - 1);
 }
 
 void ConnectionsMenu::Page(int dir)
@@ -358,6 +387,15 @@ std::vector<RouteChange> ConnectionsMenu::Click(float x, float y)
 {
     if(!in_peers_)
     {
+        // The selected row's volume bar, and a little round it, sets the volume.
+        const layout::Rect bar = LevelRect(column_, row_);
+        if(HasLevel(OpenRow()) && x >= bar.x - 1 && x < bar.x + bar.w + 1 && y >= bar.y - 2.5f
+           && y < bar.y + bar.h + 2.5f)
+        {
+            const float at = std::clamp((x - bar.x) / bar.w, 0.0f, 1.0f);
+            SetRowLevel(OpenRow(), int(at * InputLevels::kMax + 0.5f));
+            return {};
+        }
         for(int c = 0; c < 2; c++)
             for(int r = 0; r < int(columns_[c].size()); r++)
                 if(Inside(RowRect(c, r), x, y))
