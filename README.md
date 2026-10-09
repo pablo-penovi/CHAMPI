@@ -91,30 +91,7 @@ The panel is laid out from the CHOMPI board files and plays by mouse or keyboard
 - Click the toggle switch to flip it (lever up is on), and the jack at the right edge to plug or
   unplug line in. Without a plug the firmware records from the mic.
 
-From the keyboard, by default:
-
-| Keys | Panel |
-|---|---|
-| `Z X C V B N M`, `Q W E R T Y U I` | white keys 1–7 and 8–15 |
-| `S D G H J`, `2 3 5 6 7` | the black keys, as on a tracker |
-| `Tab`, `Space`, `Enter` | CHOMPI, play, loop |
-| `F1`–`F6` | select an encoder, left to right (`F1` is the speed knob, `F5` the scrub wheel) |
-| `←` `→` or `[` `]` | turn the selected encoder (hold to keep turning) |
-| `\` | push the selected encoder while held |
-| `` ` ``, `F12` | flip the toggle switch, plug or unplug line in |
-
-The keys are physical, named as on a US keyboard: on other layouts they're the keys in the same
-places. Once the keyboard has been used, a ring marks the selected encoder. To change the keys,
-start from the defaults:
-
-```sh
-build/bin/champi --print-keymap > ~/.config/champi/keymap.toml
-```
-
-and edit it. Each line sets an action to a key, a list of keys or `[]`, as in
-`turn_left = ["Left", "Minus"]`. Lines can be left out: whatever the file doesn't name keeps its
-default. A key with no name can be given by its Linux scancode. `--keymap <file>` reads another
-file.
+From the keyboard: see [Keyboard shortcuts](#keyboard-shortcuts).
 
 The window keeps the panel's proportions. A skin folder can replace the logo and the glyphs on the
 CHOMPI, play and loop keys with your own art: `logo.png`, `chompi.png`, `play.png` and `loop.png`
@@ -124,6 +101,46 @@ shipped.
 The line under the panel shows the rate and buffer size, the share of each cycle the firmware takes (load), JACK xruns, late blocks
 (cycles where the firmware didn't finish in time) and resampler dropouts. The same counts are
 printed on exit. `champi` takes the same SD-card options as `champi-headless`.
+
+## Keyboard shortcuts
+
+The window must have focus. Keys are physical, named as on a US keyboard: on other layouts they're
+the keys in the same places. These are the defaults:
+
+| Key | Panel |
+|---|---|
+| `Z` `X` `C` `V` `B` `N` `M` | white keys 1–7 |
+| `Q` `W` `E` `R` `T` `Y` `U` `I` | white keys 8–15 |
+| `S` `D` | black keys 16–17 (between white keys 1–2 and 2–3) |
+| `G` `H` `J` | black keys 18–20 (between white keys 4–5, 5–6 and 6–7) |
+| `2` `3` | black keys 21–22 (between white keys 8–9 and 9–10) |
+| `5` `6` `7` | black keys 23–25 (between white keys 11–12, 12–13 and 13–14) |
+| `Tab` | CHOMPI key |
+| `Space` | play |
+| `Enter` | loop |
+| `F1` | select ENC4, the speed knob (leftmost) |
+| `F2` `F3` `F4` | select ENC1, ENC2, ENC3 |
+| `F5` | select ENC5, the scrub wheel |
+| `F6` | select ENC6, the volume knob (rightmost) |
+| `←` or `[` | turn the selected encoder anticlockwise; hold to keep turning |
+| `→` or `]` | turn the selected encoder clockwise; hold to keep turning |
+| `\` | push the selected encoder while held (turn it meanwhile for push-and-turn) |
+| `` ` `` | flip the toggle switch |
+| `F12` | plug or unplug line in |
+
+Panel keys play while held, and chords work. ENC4 is selected at start; once the keyboard has been
+used, a ring marks the selected encoder. If the window loses focus, every held key is let go.
+
+To change the keys, start from the defaults:
+
+```sh
+build/bin/champi --print-keymap > ~/.config/champi/keymap.toml
+```
+
+and edit it. Each line sets an action to a key, a list of keys or `[]`, as in
+`turn_left = ["Left", "Minus"]`. Lines can be left out: whatever the file doesn't name keeps its
+default. A key with no name can be given by its Linux scancode. `--keymap <file>` reads another
+file. A mistake in the file stops `champi` with the line number.
 
 ## Headless runs
 
