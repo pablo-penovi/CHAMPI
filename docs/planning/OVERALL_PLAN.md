@@ -46,7 +46,7 @@ Tick a chunk's box when its PR is merged into `main`.
 | Done | # | Chunk | Done when |
 |:---:|---|---|---|
 | ☑ | 0 | Repo skeleton: the CHOMPI, daisycola and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
-| ☐ | 1 | The real TAPE firmware sources compile and link against daisycola's stubs [daisycola 1] | No missing pieces at link time |
+| ☑ | 1 | The real TAPE firmware sources compile and link against daisycola's stubs [daisycola 1] | No missing pieces at link time |
 | ☐ | 2 | Virtual SD card: seeding the daisycola image with the factory card, import/export commands [daisycola 2] | Format, seed and read-back test passes |
 | ☐ | 3 | CHOMPI board model on top of daisycola: key and encoder wiring, battery charger, LED layout; no threading yet [daisycola 3] | Unit tests pass, using the firmware's own encoder and LED code |
 | ☐ | 4 | Firmware running on daisycola's virtual MCU, plus the headless runner [daisycola 4] | Recorded-output tests pass (boot, playing keys, encoders, presets) and sanitizers are clean |
@@ -121,6 +121,16 @@ CHAMPI/
   `card-profiles/tape-2.0/`, and add `--sd-import`, `--sd-export` and `--sd-reset`.
 - **Done when:** a unit test runs mkfs, seeds the image, reads it back, and the file list
   matches the card profile.
+- As built: `core/sd_card.{h,cpp}` (`champi_sd`) has `CreateCard`, `EnsureCard`, `ImportToCard`
+  and `ExportFromCard` over daisycola's helpers. A new image is built at `<image>.new` and renamed
+  into place, so a failed reset keeps the old card. The whole profile is copied, including
+  `CHOMPI_TAPEv2_0.bin`, as on a real card (TAPE ignores it). The path honours `$XDG_DATA_HOME`.
+  `core/sd_cli.{h,cpp}` parses `--sd-image`, `--sd-reset`, `--sd-import` and `--sd-export` and
+  runs them in that order, creating the card first if it doesn't exist. `champi-headless` exists
+  as a stub that only runs these; chunk 4 adds the firmware run, and chunk 5's `champi` reuses
+  `sd_cli`. The factory-card path is compiled in from the CHOMPI submodule; an installed build will
+  need it installed with the binary. `champi-tests` (GoogleTest, fetched if not installed) holds
+  the unit tests.
 
 ### 3. CHOMPI board model (pure logic, no threads) [daisycola phase 3]
 - daisycola: done. Pin-level 4021 chains (`AttachSr4021`, `SetSrInputs`), time-stepped encoders

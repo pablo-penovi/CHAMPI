@@ -24,3 +24,10 @@ target_compile_definitions(champi_fw_tape PRIVATE main=chompi_fw_main)
 target_link_libraries(champi_fw_tape
     PUBLIC daisycola champi_daisysp
     PRIVATE champi_firmware_flags)
+
+# The virtual SD card, seeded from the firmware's factory card profile.
+add_library(champi_sd STATIC sd_card.cpp sd_cli.cpp)
+target_include_directories(champi_sd PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(champi_sd PRIVATE
+    CHAMPI_FACTORY_CARD_DIR="${CHOMPI_DIR}/firmware/card-profiles/tape-2.0")
+target_link_libraries(champi_sd PUBLIC daisycola PRIVATE champi_warnings)

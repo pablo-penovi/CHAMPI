@@ -49,6 +49,7 @@ add_subdirectory(third_party/DPF)
 # --- CHAMPI --------------------------------------------------------------------------------------
 
 add_subdirectory(core)
+add_subdirectory(tools)
 
 enable_testing()
 add_subdirectory(tests)
