@@ -54,6 +54,11 @@ add_executable(champi-keyboard-tests keyboard_test.cpp)
 target_link_libraries(champi-keyboard-tests PRIVATE champi_panel champi_warnings GTest::gtest_main)
 gtest_discover_tests(champi-keyboard-tests DISCOVERY_MODE PRE_TEST)
 
+# The connections: the routing model on a fake JACK, connections.toml, and the menu's logic.
+add_executable(champi-routing-tests routing_test.cpp)
+target_link_libraries(champi-routing-tests PRIVATE champi_panel champi_routing champi_warnings GTest::gtest_main)
+gtest_discover_tests(champi-routing-tests DISCOVERY_MODE PRE_TEST)
+
 # app/panel_layout.h must be what the extractor makes from the board files.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)

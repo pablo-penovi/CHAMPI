@@ -2,9 +2,14 @@
 // the mouse (MouseControl) and the computer keyboard (KeyboardControl). The look follows the reference render: black body, cream and gold line
 // art, white keys and knobs, the purple scrub wheel and the coloured CHOMPI, play and loop keys.
 //
+// The connections key (F8) opens the connections menu over the panel (ConnectionsMenu); nothing on
+// the panel shows it. While it's open the panel takes no input.
+//
 // Drawing is in panel millimetres; the panel is scaled to fit the window, with the status line
 // underneath. A skin folder can replace the logo and the glyphs on the CHOMPI, play and loop keys
 // with PNGs (see Skin below); none are shipped.
+#include <linux/input-event-codes.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -16,6 +21,7 @@
 #include "DistrhoUI.hpp"
 #include "app.h"
 #include "champi_plugin.h"
+#include "connections_menu.h"
 #include "keyboard.h"
 #include "led_frame.h"
 #include "panel.h"
@@ -44,6 +50,9 @@ const Color kGold(199, 163, 92);
 const Color kDarkGold(120, 92, 44);
 const Color kLedOff(8, 8, 8);
 const Color kStatusText(130, 130, 136);
+const Color kMenuBox(24, 24, 27);
+const Color kMenuSelected(54, 48, 36);
+const Color kMenuMissing(96, 96, 100);
 
 struct KeyColours
 {
@@ -121,6 +130,13 @@ class ChampiUI : public UI
         }
         mouse_.Tick(std::chrono::steady_clock::now());
         keyboard_.Tick(std::chrono::steady_clock::now());
+        if(champi::RoutingService* routing = champi::Options().routing)
+            if(auto snapshot = routing->SnapshotIfNewer(routing_version_))
+            {
+                routing_version_ = snapshot->version;
+                routing_ready_   = snapshot->graph.champi_present;
+                menu_.SetSnapshot(*snapshot);
+            }
 
         // Load figures twice a second, so the peak covers half a second.
         const auto now = std::chrono::steady_clock::now();
@@ -162,12 +178,35 @@ class ChampiUI : public UI
         DrawJacks();
         DrawFrontEdge();
         DrawStatus();
+
+        if(menu_open_)
+        {
+            // The panel stays in sight, dimmed.
+            resetTransform();
+            beginPath();
+            rect(0, 0, getWidth(), getHeight());
+            fillColor(Color(0, 0, 0, 0.6f));
+            fill();
+            translate(v.x, v.y);
+            scale(v.scale, v.scale);
+            DrawMenu();
+        }
     }
 
     bool onMouse(const MouseEvent& ev) override
     {
         if(ev.button != 1)
             return false;
+        if(menu_open_)
+        {
+            if(ev.press)
+            {
+                float x, y;
+                Fit().ToPanel(ev.pos, x, y);
+                Send(menu_.Click(x, y));
+            }
+            return true;
+        }
         const auto now = std::chrono::steady_clock::now();
         if(!ev.press)
         {
@@ -181,6 +220,8 @@ class ChampiUI : public UI
 
     bool onMotion(const MotionEvent& ev) override
     {
+        if(menu_open_)
+            return true;
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
         mouse_.Move(x, y, std::chrono::steady_clock::now());
@@ -189,6 +230,12 @@ class ChampiUI : public UI
 
     bool onScroll(const ScrollEvent& ev) override
     {
+        if(menu_open_)
+        {
+            const float steps = float(ev.delta.getY());
+            menu_.ScrollBy(steps > 0 ? -1 : steps < 0 ? 1 : 0);
+            return true;
+        }
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
         return mouse_.Scroll(x, y, float(ev.delta.getY()), std::chrono::steady_clock::now());
@@ -198,6 +245,17 @@ class ChampiUI : public UI
     {
         // On X11 a keycode is the evdev scancode plus 8: the physical key, whatever the layout.
         const champi::Scancode code = champi::Scancode(ev.keycode) - 8;
+        if(ev.press && keyboard_.keymap().Lookup(code).kind == champi::Action::Kind::kConnections)
+        {
+            menu_open_ ? CloseMenu() : OpenMenu();
+            return true;
+        }
+        if(menu_open_)
+        {
+            if(ev.press)
+                MenuKey(code);
+            return true;
+        }
         if(ev.press)
             return keyboard_.Press(code, std::chrono::steady_clock::now());
         return keyboard_.Release(code);
@@ -229,6 +287,45 @@ class ChampiUI : public UI
     }
 
     ChampiPlugin& Plugin() const { return *static_cast<ChampiPlugin*>(getPluginInstancePointer()); }
+
+    // The panel lets go of everything it holds, as on losing focus: no release will reach it.
+    void OpenMenu()
+    {
+        keyboard_.ReleaseAll();
+        mouse_.Cancel();
+        menu_.Reset();
+        menu_open_ = true;
+    }
+
+    void CloseMenu() { menu_open_ = false; }
+
+    void MenuKey(champi::Scancode code)
+    {
+        switch(code)
+        {
+            case KEY_UP: menu_.Move(0, -1); break;
+            case KEY_DOWN: menu_.Move(0, 1); break;
+            case KEY_LEFT: menu_.Move(-1, 0); break;
+            case KEY_RIGHT: menu_.Move(1, 0); break;
+            case KEY_PAGEUP: menu_.Page(-1); break;
+            case KEY_PAGEDOWN: menu_.Page(1); break;
+            case KEY_ENTER:
+            case KEY_KPENTER:
+            case KEY_SPACE: Send(menu_.Activate()); break;
+            case KEY_ESC:
+            case KEY_BACKSPACE:
+                if(!menu_.Back())
+                    CloseMenu();
+                break;
+            default: break;
+        }
+    }
+
+    void Send(std::vector<champi::RouteChange> changes)
+    {
+        if(!changes.empty() && champi::Options().routing)
+            champi::Options().routing->Request(std::move(changes));
+    }
 
     void LoadSkin()
     {
@@ -1121,6 +1218,223 @@ class ChampiUI : public UI
         text(2, layout::kHeight + kStatusHeight / 2, status, nullptr);
     }
 
+    // ---- The connections menu ------------------------------------------------------------------
+
+    void DrawMenu()
+    {
+        using Menu         = champi::ConnectionsMenu;
+        const layout::Rect& b = Menu::kBox;
+        beginPath();
+        roundedRect(b.x, b.y, b.w, b.h, 2);
+        fillColor(kMenuBox);
+        fill();
+        strokeColor(kDarkGold);
+        strokeWidth(0.4f);
+        stroke();
+
+        fontFace(NANOVG_DEJAVU_SANS_TTF);
+        fontSize(4.2f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(b.x + Menu::kPad, Menu::kTitleY, "Connections", nullptr);
+
+        const std::string close = MenuKeyName() + " or Esc closes";
+        const char* hint = !champi::Options().routing || !routing_ready_ ? close.c_str()
+                           : menu_.InPeers() ? "Enter or Space ticks    Esc goes back"
+                                             : nullptr;
+        const std::string first = "Enter opens a port    " + close;
+        fontSize(2.8f);
+        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
+        fillColor(kStatusText);
+        text(b.x + b.w - Menu::kPad, Menu::kTitleY, hint ? hint : first.c_str(), nullptr);
+
+        if(!champi::Options().routing || !routing_ready_)
+        {
+            fontSize(3.4f);
+            textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+            fillColor(kCream);
+            text(b.x + b.w / 2, b.y + b.h / 2,
+                 !champi::Options().routing ? "Routing needs JACK or PipeWire: CHAMPI is running on native audio."
+                                            : "Waiting for CHAMPI's ports...",
+                 nullptr);
+            return;
+        }
+        if(menu_.InPeers())
+            DrawMenuPeers();
+        else
+            DrawMenuPorts();
+    }
+
+    std::string MenuKeyName() const
+    {
+        const auto keys = keyboard_.keymap().KeysFor({champi::Action::Kind::kConnections, 0});
+        return keys.empty() ? "Esc" : champi::ScancodeName(keys[0]);
+    }
+
+    void DrawMenuPorts()
+    {
+        using Menu = champi::ConnectionsMenu;
+        for(int c = 0; c < 2; c++)
+        {
+            const layout::Rect first = Menu::RowRect(c, 0);
+            fontSize(3.0f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kGold);
+            text(first.x + 1, Menu::kSubtitleY, c == 0 ? "INPUTS" : "OUTPUTS", nullptr);
+
+            const auto& rows = menu_.Column(c);
+            for(int r = 0; r < int(rows.size()); r++)
+            {
+                const Menu::Row&   row      = rows[r];
+                const layout::Rect rr       = Menu::RowRect(c, r);
+                const bool         selected = menu_.SelectedColumn() == c && menu_.SelectedRow() == r;
+                beginPath();
+                roundedRect(rr.x, rr.y, rr.w, rr.h, 1.2f);
+                fillColor(selected ? kMenuSelected : Color(32, 32, 35));
+                fill();
+                if(selected)
+                {
+                    strokeColor(kGold);
+                    strokeWidth(0.35f);
+                    stroke();
+                }
+
+                std::string summary;
+                for(size_t i = 0; i < row.connected.size(); i++)
+                    summary += (i ? ",  " : "") + row.connected[i];
+                if(summary.empty())
+                    summary = "not connected";
+                if(row.missing)
+                    summary += "    (" + std::to_string(row.missing) + " saved, not present)";
+
+                scissor(rr.x, rr.y, rr.w - 1.5f, rr.h);
+                fontSize(3.6f);
+                textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+                fillColor(kCream);
+                text(rr.x + 3, rr.y + 4.4f, row.label.c_str(), nullptr);
+                fontSize(2.7f);
+                fillColor(row.connected.empty() ? kMenuMissing : kStatusText);
+                text(rr.x + 3, rr.y + 9.4f, summary.c_str(), nullptr);
+                resetScissor();
+            }
+        }
+    }
+
+    void DrawMenuPeers()
+    {
+        using Menu             = champi::ConnectionsMenu;
+        using Item             = Menu::Item;
+        const Menu::Row&   row = menu_.OpenRow();
+        const layout::Rect& k  = Menu::kBack;
+
+        beginPath();
+        roundedRect(k.x, k.y, k.w, k.h, 1);
+        strokeColor(kStatusText);
+        strokeWidth(0.3f);
+        stroke();
+        fontSize(2.9f);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        fillColor(kStatusText);
+        text(k.x + k.w / 2, k.y + k.h / 2, "< Back", nullptr);
+
+        const bool        input = champi::kChampiPorts[row.ports[0]].input;
+        const std::string title = row.label + (input ? ": connect from" : ": connect to");
+        fontSize(3.6f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(k.x + k.w + 3, Menu::kSubtitleY, title.c_str(), nullptr);
+
+        const auto&         items = menu_.Items();
+        const layout::Rect& list  = Menu::kList;
+        bool any_port = false;
+        for(const Item& item : items)
+            any_port |= item.kind == Item::Kind::kPeer;
+
+        scissor(list.x, list.y, list.w, list.h);
+        const int last = std::min(int(items.size()), menu_.FirstVisible() + Menu::VisibleLines() + 1);
+        for(int i = menu_.FirstVisible(); i < last; i++)
+        {
+            const Item&        item = items[i];
+            const layout::Rect r    = menu_.ItemRect(i);
+            const float        cy   = r.y + r.h / 2;
+            if(item.kind == Item::Kind::kHeader)
+            {
+                fontSize(2.9f);
+                textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+                fillColor(kGold);
+                text(r.x + 1, cy + 0.6f, item.label.c_str(), nullptr);
+                continue;
+            }
+            if(i == menu_.SelectedItem())
+            {
+                beginPath();
+                roundedRect(r.x, r.y + 0.3f, r.w - 3, r.h - 0.6f, 1);
+                fillColor(kMenuSelected);
+                fill();
+            }
+            DrawCheckbox(r.x + 4, cy, item.tick, item.missing);
+            fontSize(3.2f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(item.missing ? kMenuMissing : kCream);
+            text(r.x + 8, cy, item.label.c_str(), nullptr);
+        }
+        resetScissor();
+
+        if(!any_port)
+        {
+            fontSize(3.0f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kMenuMissing);
+            text(list.x + 8, menu_.ItemRect(int(items.size())).y + Menu::kLineHeight / 2,
+                 "Nothing on the graph fits this port.", nullptr);
+        }
+
+        // A scroll bar when the list is longer than the box.
+        const int lines = Menu::VisibleLines();
+        if(int(items.size()) > lines)
+        {
+            const float h = list.h * lines / items.size();
+            const float y = list.y + (list.h - h) * menu_.FirstVisible() / float(items.size() - lines);
+            beginPath();
+            roundedRect(list.x + list.w - 1.2f, y, 1.2f, h, 0.6f);
+            fillColor(kStatusText);
+            fill();
+        }
+    }
+
+    void DrawCheckbox(float x, float y, champi::ConnectionsMenu::Tick tick, bool missing)
+    {
+        using Tick           = champi::ConnectionsMenu::Tick;
+        constexpr float kBox = 3.4f;
+        const Color     ink  = missing ? kMenuMissing : kGold;
+        beginPath();
+        roundedRect(x - kBox / 2, y - kBox / 2, kBox, kBox, 0.5f);
+        if(tick == Tick::kOn)
+        {
+            fillColor(ink);
+            fill();
+            beginPath();
+            moveTo(x - 1.0f, y + 0.1f);
+            lineTo(x - 0.25f, y + 0.85f);
+            lineTo(x + 1.1f, y - 0.8f);
+            strokeColor(kMenuBox);
+            strokeWidth(0.5f);
+            stroke();
+            return;
+        }
+        strokeColor(ink);
+        strokeWidth(0.35f);
+        stroke();
+        if(tick == Tick::kSome)
+        {
+            beginPath();
+            moveTo(x - 0.9f, y);
+            lineTo(x + 0.9f, y);
+            strokeWidth(0.5f);
+            stroke();
+        }
+    }
+
     champi::MouseControl                  mouse_;
     champi::KeyboardControl               keyboard_;
     champi::LedFrame                      leds_{};
@@ -1129,6 +1443,10 @@ class ChampiUI : public UI
     Skin                                  skin_;
     bool                                  skin_loaded_ = false;
     bool                                  test_mode_hold_;
+    champi::ConnectionsMenu               menu_;
+    bool                                  menu_open_       = false;
+    uint64_t                              routing_version_ = 0;
+    bool                                  routing_ready_   = false; // CHAMPI's ports are listed
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChampiUI)
 };

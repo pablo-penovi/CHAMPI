@@ -71,6 +71,7 @@ TEST(KeyNames, ActionsRoundTrip)
     EXPECT_EQ(champi::ActionName(Select(4)), "encoder_4");
     EXPECT_EQ(champi::ActionFromName("key_25"), Key(25));
     EXPECT_EQ(champi::ActionFromName("line_in"), (Action{Kind::kLineIn, 0}));
+    EXPECT_EQ(champi::ActionFromName("connections"), (Action{Kind::kConnections, 0}));
     EXPECT_FALSE(champi::ActionFromName("key_26")); // that's "chompi"
     EXPECT_FALSE(champi::ActionFromName("encoder_7"));
 }
@@ -103,6 +104,7 @@ TEST(DefaultKeymap, TrackerStyleTwoOctaves)
     EXPECT_EQ(m.Lookup(KEY_F9), (Action{Kind::kSdCard, 0}));
     EXPECT_EQ(m.Lookup(KEY_F10), (Action{Kind::kUsb, 0}));
     EXPECT_EQ(m.Lookup(KEY_BACKSLASH), (Action{Kind::kPush, 0}));
+    EXPECT_EQ(m.KeysFor({Kind::kConnections, 0}), std::vector<Scancode>{KEY_F8});
     EXPECT_EQ(m.KeysFor({Kind::kTurnLeft, 0}), (std::vector<Scancode>{KEY_LEFTBRACE, KEY_LEFT}));
     EXPECT_EQ(m.KeysFor({Kind::kTurnRight, 0}), (std::vector<Scancode>{KEY_RIGHTBRACE, KEY_RIGHT}));
     EXPECT_EQ(m.Lookup(KEY_A), Action{});
@@ -132,7 +134,7 @@ TEST(DefaultKeymap, EveryActionHasAKey)
     for(int e = 1; e <= champi::kNumEncoders; e++)
         EXPECT_FALSE(m.KeysFor(Select(e)).empty()) << "ENC" << e;
     for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn, Kind::kUsb,
-                     Kind::kSdCard})
+                     Kind::kSdCard, Kind::kConnections})
         EXPECT_FALSE(m.KeysFor({kind, 0}).empty()) << champi::ActionName({kind, 0});
 }
 
@@ -285,6 +287,13 @@ TEST_F(PanelKeyboard, UnmappedKeysAreIgnored)
     EXPECT_FALSE(keys_->Press(KEY_A, At(0)));
     EXPECT_FALSE(keys_->Release(KEY_A));
     EXPECT_FALSE(keys_->Release(KEY_Z)); // not held
+    EXPECT_FALSE(keys_->Used());
+}
+
+TEST_F(PanelKeyboard, TheConnectionsKeyIsLeftToTheWindow)
+{
+    EXPECT_FALSE(keys_->Press(KEY_F8, At(0)));
+    EXPECT_FALSE(keys_->Release(KEY_F8));
     EXPECT_FALSE(keys_->Used());
 }
 

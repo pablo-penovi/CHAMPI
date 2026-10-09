@@ -19,7 +19,7 @@ daisycola phases 1–5 are done and pushed (`e9ab6a0`). TAPE links against it un
 headless from the factory card on the signal-based virtual MCU, and the suite is clean under TSan
 and ASan. So the daisycola side of chunks 1–4 is finished and the CHAMPI side of each is smaller
 than first planned. Chunk 4 closed the last phase 5 check: using `daisycola/host.h` for real only
-turned up the audio bug below. Phase 6 (TEMPO and WAVE) is for later, with chunk 9.
+turned up the audio bug below. Phase 6 (TEMPO and WAVE) is for later, with chunk 10.
 
 Chunk 3 moved CHAMPI's pin to `7230242`: I2C `TransmitBlocking` now waits for a DMA read running
 on the same bus, as libDaisy's does. TAPE's medium-battery check depends on that.
@@ -61,7 +61,8 @@ Tick a chunk's box when its PR is merged into `main`.
 | ☑ | 6 | The real panel: vector drawing, layout taken from the `.brd` files, LED rendering, mouse control | It looks like the reference image and plays fully by mouse |
 | ☑ | 7 | Computer keyboard control with a configurable keymap | It plays fully without the mouse |
 | ☑ | 8 | Polish: shift menus, looper and recording, test mode, removing the SD card, encoder feel, README | Everything in the detailed plan's milestone 5 is covered |
-| ☐ | 9 | Later: TEMPO and WAVE [daisycola 6] | |
+| ☐ | 9 | Connections menu: route CHAMPI's audio and MIDI ports to other JACK/PipeWire ports from an F8 overlay, saved and restored | Every port can be routed from the menu without qpwgraph, and the routing comes back on the next start |
+| ☐ | 10 | Later: TEMPO and WAVE [daisycola 6] | |
 
 Both original big risks are settled in daisycola: the fork turned out manageable (chunk 1), and the
 signal-based interrupts work under both sanitizers (chunk 4). The biggest risk now is chunk 5:
@@ -429,7 +430,93 @@ CHAMPI/
   - Still manual: playing it by hand to judge the encoder feel, and the CHOMPI output's DC
     blocking (left as is).
 
-### 9. Later: TEMPO and WAVE
+### 9. Connections menu
+Routing CHAMPI's ports from inside the app, so they don't need connecting by hand in qpwgraph or
+`pw-link` on every start. Today `JackMonitor` connects master out to the first two playback ports
+and every hardware MIDI source to `events-in`, once, at start; the inputs, phones out and
+`midi-out` are never connected, nothing is saved, and a controller plugged in later is missed.
+
+- **Routing model** (`app/routing.{h,cpp}`, no JACK or DPF, so the tests can use it):
+  - CHAMPI's nine ports: `mic`, `line_l`, `line_r` and `events-in` (inputs), `master_l`,
+    `master_r`, `phones_l`, `phones_r` and `midi-out` (outputs), each with its type and direction.
+  - The peer ports each one can connect to, grouped by client, with a readable name for each (the
+    JACK pretty-name metadata or alias PipeWire sets, falling back to the port name).
+  - The connections that exist and the ones wanted. Stereo pairs (master, phones, line in) are one
+    row by default, connecting L to L and R to R (a mono peer gets both); a row can be split to
+    route each side on its own.
+  - Behind a small backend interface, so the tests drive it with a fake JACK.
+- **Live JACK backend** (`JackMonitor` grows from a one-off connector into a service):
+  - Port registration and connect callbacks only mark the graph changed: JACK functions can't be
+    called from inside them. The monitor's own thread then lists ports and connections again
+    (`jack_get_ports`, `jack_port_get_all_connections`) and publishes a snapshot to the UI under a
+    mutex. The UI thread never calls JACK, which can block under PipeWire.
+  - The menu's changes go to that thread as requests (`jack_connect`, `jack_disconnect`).
+  - Connections made elsewhere (qpwgraph, `pw-link`) show up in the menu as they happen.
+- **Saved routing** (`~/.config/champi/connections.toml`, the same small TOML subset as
+  `keymap.toml`):
+  - One line per CHAMPI port with the list of peers, e.g. `master_l = ["system:playback_1"]`.
+  - Written when the menu changes a connection. Connections made outside the menu aren't saved,
+    so a session in qpwgraph doesn't silently rewrite the file.
+  - Restored at start once CHAMPI's ports exist, and again whenever a saved peer port appears, so
+    a USB interface or controller plugged in later gets connected.
+  - Peers are matched by port name, then by alias, since some PipeWire names (card numbers,
+    `Midi-Bridge` ports) change between sessions. A saved peer that's missing is kept in the file
+    and shown greyed in the menu.
+  - Without a file, today's defaults apply (master to the first two playback ports, hardware MIDI
+    sources to `events-in`). `--no-connect` still turns all of it off, saved routing included;
+    `--connections <file>` reads another file.
+- **The menu** (a NanoVG overlay in `champi_ui.cpp`, logic in `champi_panel` where it can be):
+  - Opened and closed with `F8` only; `Esc` also closes it. Nothing is drawn on the panel or the
+    status line to open it: no button, label or click target. F8 is a keymap action like the rest,
+    `connections`, so `keymap.toml` can move it; its default is `F8`, which no panel action uses.
+  - Drawn over the panel, which stays visible but dimmed. Two columns, "Inputs" (`mic`, line in,
+    `events-in`) and "Outputs" (master, phones, `midi-out`); a row opens the list of peers that
+    fit it, grouped by client, each with a checkbox. Scrolls when the list is long.
+  - Mouse and keyboard: click to tick or untick; arrows move, `Enter` or `Space` ticks, `Esc`
+    goes back a level.
+  - While it's open, the panel takes no mouse or keyboard input; held panel keys are let go when
+    it opens, as on losing focus.
+  - Without a JACK server (DPF's native-audio fallback), F8 shows a one-line note that routing
+    needs JACK or PipeWire, instead of the menu.
+- **Done when:** every CHAMPI port can be connected and disconnected from the F8 menu without
+  qpwgraph, the routing is restored on the next start and when a saved device is plugged in, and
+  nothing on the rendered panel hints at the menu.
+- Tests: the routing model against a fake backend (listing, pairing, matching by name and alias,
+  restore and hotplug, the defaults without a file, `--no-connect`), the TOML round trip and its
+  errors with line numbers, and the menu's navigation and hit-testing without DPF. ASan and TSan
+  clean. Still manual: the real backend under PipeWire, including whether WirePlumber links or
+  restores CHAMPI's ports on its own and fights the menu.
+- How it went:
+  - Under pipewire-jack the port names are already readable (the node descriptions, as in
+    `MiniFuse 1 Main Output L/R:playback_FL`), and neither aliases nor pretty-names are set. A
+    client whose name is taken gets a `-<number>` suffix (`MiniFuse 1 Loopback L/R-62`), which
+    changes between sessions, so a saved peer is matched by name, then alias, then by name with
+    that suffix dropped. The menu groups by client and shows the port part.
+  - Some PipeWire ports carry odd flags (both input and output), so the backend lists each type
+    and direction with `jack_get_ports` filters, as the old connector did, not from the flags.
+  - The stereo pairing is by order within a client: consecutive ports pair up, an odd one left
+    over is mono and gets both sides. The label reads `playback_FL/FR`.
+  - Split isn't saved: a pair starts split if its connections only fit one side at a time, and
+    the "route left and right separately" line at the top of a pair's list toggles it.
+  - The defaults count as saved once applied: the first menu change writes them to the file with
+    it. Until then a hardware MIDI source plugged in later is connected too.
+  - Restoring is on appearance only (CHAMPI's ports, then each new peer), so a saved connection
+    undone in qpwgraph isn't fought over.
+  - `keymap.toml`'s parser moved to `app/toml_lines` and serves both files; it now knows `\"`
+    and `\\` in strings. `MouseControl::Cancel` lets go of the mouse without a release's click
+    when the menu opens.
+  - Checked against PipeWire: the defaults, the restore at start, a saved port that appears later
+    (a fake JACK client), the `-<number>` match, and the menu's requests through `JackMonitor`
+    (a scratch harness, also under TSan: the only reports are inside libpipewire). The app under
+    TSan reports only the GL driver's threads at window creation; under ASan it's clean.
+  - Screenshots of both levels of the menu were taken with niri, from a scratch build that opens
+    it at start (there's no key injection here).
+  - 113 tests pass (25 new in `champi-routing-tests`), and the unit suites pass under ASan and
+    TSan.
+  - Still manual: pressing F8 and clicking through the menu by hand, and whether WirePlumber
+    fights it.
+
+### 10. Later: TEMPO and WAVE
 - daisycola phase 6: TIM16 MIDI clock, `MidiManager` DMA transmit, `f_opendir`/`readdir`.
 - Their card profiles and the libDaisy fork headers for each.
 - Probably one chunk per firmware.

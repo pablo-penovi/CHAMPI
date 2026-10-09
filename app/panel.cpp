@@ -211,6 +211,16 @@ bool MouseControl::Scroll(float x, float y, float steps, Clock::time_point now)
     return true;
 }
 
+void MouseControl::Cancel()
+{
+    if(key_)
+        panel_.SetKey(key_, false);
+    if(encoder_ && pushed_)
+        panel_.SetEncoderPushed(encoder_, false);
+    key_ = encoder_ = 0;
+    EndClick();
+}
+
 void MouseControl::Tick(Clock::time_point now)
 {
     if(click_encoder_ && now >= click_ends_)
