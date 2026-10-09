@@ -1,6 +1,7 @@
 #include "keyboard.h"
 
 #include "panel.h"
+#include "toml_lines.h"
 
 #include <linux/input-event-codes.h>
 
@@ -81,144 +82,10 @@ std::vector<Action> AllActions()
     all.push_back({K::kTurnLeft, 0});
     all.push_back({K::kTurnRight, 0});
     all.push_back({K::kPush, 0});
+    all.push_back({K::kConnections, 0});
     return all;
 }
 
-// Just enough TOML for a keymap: `name = value` lines, where a value is a string, an integer or
-// an array of them (which may span lines), and # comments.
-class KeymapParser
-{
-  public:
-    KeymapParser(std::string_view text, const std::string& source) : text_(text), source_(source) {}
-
-    // Calls set(action name, keys) for each line.
-    template <typename F>
-    void Parse(F&& set)
-    {
-        for(;;)
-        {
-            SkipBlank(true);
-            if(AtEnd())
-                return;
-            if(Peek() == '[')
-                Fail("tables aren't used in a keymap; write `action = \"Key\"` lines");
-            const int         line = line_;
-            const std::string name = BareKey();
-            SkipBlank(false);
-            Expect('=');
-            SkipBlank(false);
-            std::vector<Scancode> keys;
-            if(Peek() == '[')
-            {
-                Next();
-                for(;;)
-                {
-                    SkipBlank(true);
-                    if(Peek() == ']')
-                        break;
-                    keys.push_back(Key());
-                    SkipBlank(true);
-                    if(Peek() != ',')
-                        break;
-                    Next();
-                }
-                SkipBlank(true);
-                Expect(']');
-            }
-            else
-                keys.push_back(Key());
-            SkipBlank(false);
-            if(!AtEnd() && Peek() != '\n')
-                Fail("expected the end of the line");
-            set(name, keys, line);
-        }
-    }
-
-    [[noreturn]] void Fail(const std::string& what, int line = 0) const
-    {
-        throw std::runtime_error(source_ + ":" + std::to_string(line ? line : line_) + ": " + what);
-    }
-
-  private:
-    bool AtEnd() const { return pos_ >= text_.size(); }
-    char Peek() const { return AtEnd() ? '\0' : text_[pos_]; }
-    char Next()
-    {
-        const char c = text_[pos_++];
-        if(c == '\n')
-            line_++;
-        return c;
-    }
-
-    void Expect(char c)
-    {
-        if(Peek() != c)
-            Fail(std::string("expected '") + c + "'");
-        Next();
-    }
-
-    // Spaces, tabs and comments, and newlines too if `newlines`.
-    void SkipBlank(bool newlines)
-    {
-        while(!AtEnd())
-        {
-            const char c = Peek();
-            if(c == '#')
-                while(!AtEnd() && Peek() != '\n')
-                    Next();
-            else if(c == ' ' || c == '\t' || c == '\r' || (newlines && c == '\n'))
-                Next();
-            else
-                return;
-        }
-    }
-
-    std::string BareKey()
-    {
-        std::string name;
-        while(!AtEnd() && (std::isalnum((unsigned char)Peek()) || Peek() == '_' || Peek() == '-'))
-            name += Next();
-        if(name.empty())
-            Fail("expected an action name");
-        return name;
-    }
-
-    Scancode Key()
-    {
-        const char c = Peek();
-        if(c == '"' || c == '\'')
-        {
-            Next();
-            std::string name;
-            while(!AtEnd() && Peek() != c && Peek() != '\n')
-                name += Next();
-            Expect(c);
-            const auto code = ScancodeFromName(name);
-            if(!code)
-                Fail("no key is called \"" + name + "\"");
-            return *code;
-        }
-        if(std::isdigit((unsigned char)c))
-        {
-            long code = 0;
-            while(std::isdigit((unsigned char)Peek()))
-            {
-                code = code * 10 + (Next() - '0');
-                if(code > kMaxScancode)
-                    Fail("scancodes go up to " + std::to_string(kMaxScancode));
-            }
-            if(code == 0)
-                Fail("scancode 0 isn't a key");
-            return Scancode(code);
-        }
-        Fail("expected a key name in quotes, a scancode, or a [list] of them");
-    }
-
-    std::string_view   text_;
-    const std::string& source_;
-    size_t             pos_  = 0;
-    int                line_ = 1;
-};
 } // namespace
 
 std::optional<Scancode> ScancodeFromName(std::string_view name)
@@ -258,6 +125,7 @@ std::string ActionName(const Action& a)
         case K::kLineIn: return "line_in";
         case K::kUsb: return "usb";
         case K::kSdCard: return "sd_card";
+        case K::kConnections: return "connections";
         case K::kNone: break;
     }
     return "none";
@@ -302,30 +170,47 @@ Keymap Keymap::Defaults()
     m.Bind(KEY_RIGHT, {K::kTurnRight, 0});
     m.Bind(KEY_RIGHTBRACE, {K::kTurnRight, 0});
     m.Bind(KEY_BACKSLASH, {K::kPush, 0});
+    m.Bind(KEY_F8, {K::kConnections, 0});
     return m;
 }
 
 void Keymap::Apply(std::string_view toml, const std::string& source)
 {
-    Keymap                    result = *this;
-    std::set<std::string>     actions_seen;
-    std::map<Scancode, int>   keys_seen; // and the line they were set on
-    KeymapParser              parser(toml, source);
-    parser.Parse([&](const std::string& name, const std::vector<Scancode>& keys, int line) {
-        const auto action = ActionFromName(name);
+    Keymap                  result = *this;
+    std::set<std::string>   actions_seen;
+    std::map<Scancode, int> keys_seen; // and the line they were set on
+    const auto lines = ParseTomlLines(toml, source, "a key name in quotes, a scancode",
+                                      "tables aren't used in a keymap; write `action = \"Key\"` lines");
+    for(const TomlLine& l : lines)
+    {
+        const auto action = ActionFromName(l.name);
         if(!action)
-            parser.Fail("no action is called \"" + name + "\"", line);
-        if(!actions_seen.insert(name).second)
-            parser.Fail(name + " is set twice", line);
+            TomlFail(source, l.line, "no action is called \"" + l.name + "\"");
+        if(!actions_seen.insert(l.name).second)
+            TomlFail(source, l.line, l.name + " is set twice");
         result.Unbind(*action);
-        for(Scancode code : keys)
+        for(const TomlValue& v : l.values)
         {
+            Scancode code;
+            if(v.is_string)
+            {
+                const auto named = ScancodeFromName(v.text);
+                if(!named)
+                    TomlFail(source, v.line, "no key is called \"" + v.text + "\"");
+                code = *named;
+            }
+            else if(v.number > kMaxScancode)
+                TomlFail(source, v.line, "scancodes go up to " + std::to_string(kMaxScancode));
+            else if(v.number == 0)
+                TomlFail(source, v.line, "scancode 0 isn't a key");
+            else
+                code = Scancode(v.number);
             if(const auto it = keys_seen.find(code); it != keys_seen.end())
-                parser.Fail(ScancodeName(code) + " is already set on line " + std::to_string(it->second), line);
-            keys_seen[code] = line;
+                TomlFail(source, l.line, ScancodeName(code) + " is already set on line " + std::to_string(it->second));
+            keys_seen[code] = l.line;
             result.Bind(code, *action);
         }
-    });
+    }
     *this = std::move(result);
 }
 
@@ -366,7 +251,8 @@ std::string Keymap::ToToml() const
                       "# Keys are physical and named as on a US keyboard, whatever your layout; a\n"
                       "# number is a Linux scancode. An action can take a [list] of keys, or [].\n"
                       "# key_1-15 are the white keys, key_16-25 the black ones. encoder_n selects\n"
-                      "# ENCn (ENC4 is the leftmost) for turn_left, turn_right and push.\n\n";
+                      "# ENCn (ENC4 is the leftmost) for turn_left, turn_right and push.\n"
+                      "# connections opens and closes the connections menu.\n\n";
     for(const Action& a : AllActions())
     {
         const auto keys = KeysFor(a);
@@ -395,8 +281,8 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
     if(held_.count(code))
         return true; // a repeat
     const Action action = keymap_.Lookup(code);
-    if(action.kind == K::kNone)
-        return false;
+    if(action.kind == K::kNone || action.kind == K::kConnections)
+        return false; // the connections key belongs to the window, not the panel
     used_       = true;
     Held& held  = held_[code];
     held.action = action;
@@ -434,6 +320,7 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
             card_.SetInserted(!card_.Inserted());
             break;
         case K::kNone:
+        case K::kConnections:
             break;
     }
     return true;

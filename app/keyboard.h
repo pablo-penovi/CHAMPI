@@ -42,6 +42,7 @@ struct Action
         kLineIn,        // plugs or unplugs the line-in jack
         kUsb,           // plugs or unplugs USB power
         kSdCard,        // pulls the SD card out or puts it back
+        kConnections,   // opens and closes the connections menu (the window handles it)
     };
     Kind kind  = Kind::kNone;
     int  index = 0; // KEYn or ENCn, numbered from 1
@@ -126,7 +127,8 @@ class KeyboardControl
     {
     }
 
-    /** A key went down. Returns false if it isn't mapped. Repeats of a held key are ignored. */
+    /** A key went down. Returns false if it isn't mapped to the panel (the connections key isn't).
+     *  Repeats of a held key are ignored. */
     bool Press(Scancode code, Clock::time_point now);
     /** A key went up. Returns false if it wasn't held. */
     bool Release(Scancode code);

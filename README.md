@@ -23,7 +23,7 @@ recording, the shift menus, presets, options and the factory test.
   MIDI controllers.
 - **A standalone JACK app**, which also runs under PipeWire, built with
   [DPF](https://github.com/DISTRHO/DPF). It has mic and line inputs, master and headphone outputs,
-  and MIDI in and out.
+  and MIDI in and out, which a built-in menu connects and reconnects on the next start.
 - **A virtual SD card**: a disk-image file seeded with the factory TAPE card, with import, export
   and reset commands. You can pull it out while TAPE runs.
 - **A headless runner** that plays the firmware from a script and records its audio, LEDs and MIDI
@@ -59,9 +59,9 @@ build/bin/champi
 `champi` is a standalone JACK client named `CHAMPI`. Under PipeWire, `pipewire-jack` provides the
 JACK library, so no JACK server is needed. It has three inputs (`mic`, `line_l`, `line_r`), four
 outputs (`master_l`, `master_r`, `phones_l`, `phones_r`), a MIDI input (`events-in`) and a MIDI
-output (`midi-out`). At start it connects master out to the first two playback ports and every
-hardware MIDI source to its MIDI input; `--no-connect` turns that off. Other connections can be
-made in qpwgraph or with `pw-link`.
+output (`midi-out`). At first it connects master out to the first two playback ports and every
+hardware MIDI source to its MIDI input. `F8` opens the [connections menu](#connections), which
+connects any of its ports and remembers them for the next start.
 
 The firmware runs at 48 kHz. At other rates the audio is resampled with libsamplerate, which adds a
 little latency, so it's better to run the graph at 48 kHz. For a 64-frame buffer:
@@ -75,7 +75,8 @@ finished, about five seconds later, as on the device.
 
 | Option | |
 |---|---|
-| `--no-connect` | don't connect master out and MIDI controllers |
+| `--no-connect` | don't connect anything at start, saved connections included (the menu still works) |
+| `--connections <file>` | the connections the menu saves and restores (see [Connections](#connections)) |
 | `--skin <dir>` | panel art (see [Skin](#skin)) |
 | `--keymap <file>` | computer keys for the panel (see [Keyboard](#keyboard)) |
 | `--print-keymap` | print the keymap in use as `keymap.toml`, and exit |
@@ -133,6 +134,7 @@ the keys in the same places. These are the defaults:
 | `F9` | pull the SD card out, or put it back |
 | `F10` | plug or unplug USB power |
 | `F12` | plug or unplug line in |
+| `F8` | open or close the [connections menu](#connections) |
 
 Panel keys play while held, and chords work. A held turn key turns 20 detents a second, then 40
 after a second, then 80. ENC4 is selected at start; once the keyboard has been used, a ring marks
@@ -150,7 +152,49 @@ default. A key with no name can be given by its Linux scancode. `--keymap <file>
 file. A mistake in the file stops `champi` with the line number.
 
 The actions are `key_1` to `key_25`, `chompi`, `play`, `loop`, `toggle`, `line_in`, `usb`,
-`sd_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right` and `push`.
+`sd_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right`, `push` and `connections`.
+
+### Connections
+
+`F8` opens a menu over the panel for connecting CHAMPI's ports to other JACK or PipeWire ports,
+without qpwgraph. Nothing on the panel shows it; `F8` or `Esc` closes it. While it's open, the panel
+takes no input.
+
+The menu has two columns: the inputs (mic, line in, MIDI in) and the outputs (master, phones, MIDI
+out). Each row says what it's connected to. Open a row to list the ports it can connect to,
+grouped by device, and tick or untick them. Stereo pairs are one row: ticking a stereo port
+connects L to L and R to R, and a mono port gets both sides. To route each side on its own, tick
+"Route left and right separately" at the top of the list. A pair connected one side at a time is
+split already.
+
+Mouse: click a row to open it, click a port to tick it, `< Back` to go back, and scroll a long
+list. Keys: arrows to move, `Enter` or `Space` to open or tick, `Page Up`/`Page Down`, `Esc` (or
+`Backspace`) to go back a level.
+
+The menu's changes are saved to `~/.config/champi/connections.toml`, and restored at the next
+start and whenever a saved port appears, so a USB interface or controller plugged in later gets
+connected. Each line lists a port's peers:
+
+```toml
+master_l = ["MiniFuse 1 Main Output L/R:playback_FL"]
+master_r = ["MiniFuse 1 Main Output L/R:playback_FR"]
+events-in = ["Midi-Bridge:KeyStep 32 (capture)"]
+```
+
+- A saved port is found by its name, then by its JACK alias, then by its name without the `-62`
+  that PipeWire adds to a device's name when another has it, which changes between sessions.
+- A saved port that isn't there stays in the file and is listed greyed at the end of the row's
+  list. Untick it to forget it.
+- Connections made elsewhere (qpwgraph, `pw-link`) show in the menu but aren't saved. Undoing a
+  saved connection elsewhere holds until that port next appears or CHAMPI restarts.
+- Without the file, the defaults apply: master out to the first two playback ports, and every
+  hardware MIDI source to MIDI in, including one plugged in later. The first change in the menu
+  writes the file, with whatever the defaults connected.
+- `--no-connect` makes no connections at start, saved ones included; the menu still works and
+  saves. `--connections <file>` uses another file. A mistake in the file stops `champi` with the
+  line number.
+- Under DPF's native-audio fallback (no JACK server), `F8` only says that routing needs JACK or
+  PipeWire.
 
 ### MIDI
 
@@ -299,14 +343,14 @@ sends.
 
 ## Troubleshooting
 
-- **No sound.** Check master out is connected to your playback ports (`--no-connect` turns that
-  off), and that the volume knob (ENC6) isn't down. TAPE ignores the panel for the first five
+- **No sound.** Check master out is connected to your playback ports in the connections menu
+  (`F8`), and that the volume knob (ENC6) isn't down. TAPE ignores the panel for the first five
   seconds after boot.
 - **Xruns or late blocks.** Run the graph at 48 kHz and a buffer of 64 frames or more. The firmware
   thread runs at normal priority, so a fully loaded machine can delay it.
-- **A MIDI controller does nothing.** Check it's connected to `CHAMPI:events-in` and sends on the
-  MIDI in channel from `options.json`. Under a JACK2 server without a2jmidid, ALSA-only
-  controllers need connecting by hand.
+- **A MIDI controller does nothing.** Check it's ticked under MIDI in in the connections menu
+  (`F8`), and that it sends on the MIDI in channel from `options.json`. Under a JACK2 server
+  without a2jmidid, ALSA-only controllers aren't on the JACK graph, so they can't be listed.
 - **The panel stopped changing samples.** The SD card may be out: the status line says so. Put it
   back and restart `champi`.
 - **A broken card.** `--sd-reset` starts again from the factory card. Export anything you want to

@@ -134,6 +134,7 @@ The firmware assumes interrupts preempt the main loop in a fixed priority order.
 - **Plugin side** (`ChompiPlugin`):
   - Audio: 3 inputs (mic, line L, line R) and 4 outputs (master L/R, phones L/R). By default master goes to the system playback ports.
   - MIDI in and out are enabled. JACK MIDI accepts any number of controller connections, which merge into the virtual TRS input. A built-in ALSA-sequencer auto-connect option covers non-JACK use.
+  - Routing: a connections menu (`F8`) connects any of CHAMPI's ports to other JACK/PipeWire ports. A second JACK client lists the graph, follows changes made elsewhere, and saves the menu's routing to `~/.config/champi/connections.toml`, which is restored at start and when a saved device appears. Without that file, the defaults above apply.
   - The firmware runtime is a process singleton. That is fine for standalone; a future plugin would need it confined to one instance per process.
   - DPF parameters are not used for controls. The UI talks to the core through direct access (`DISTRHO_PLUGIN_WANT_DIRECT_ACCESS`), using `PanelState` and `LedFrame`.
 - **UI side** (NanoVG, about 60 fps):
@@ -150,6 +151,7 @@ The firmware assumes interrupts preempt the main loop in a fixed priority order.
     - Black keys = `S D G H J` and `2 3 5 6 7`.
     - CHOMPI key = `Tab`, Play = `Space`, Loop = `Enter`, toggle switch = `` ` ``.
     - `F1`–`F6` select an encoder; `←`/`→` (or `[`/`]`) turn it; `\` pushes it.
+    - `F8` opens and closes the connections menu, an overlay drawn over the panel. Nothing on the rendered panel opens it or hints at it.
   - MIDI controllers work natively through the firmware's own MIDI handling: notes play keys, CC20–25 set encoders, CC26/27 work play/loop, on the channel set in `options.json`.
 
 ### 5. Build and dependencies
@@ -168,7 +170,8 @@ Milestones 1–3 are done on the daisycola side; the CHAMPI side is chunks 1–4
 3. **Virtual MCU.** Signal-based interrupts, the audio adapter, LED DMA emulation, and a ThreadSanitizer/ASan run that comes up clean.
 4. **DPF app.** Audio and MIDI I/O, the panel UI with live LEDs, mouse and keyboard input.
 5. **Fidelity and polish.** Encoder feel and acceleration, the shift-menu flows (bank/mode, save/copy/erase presets), looper and record via mic and line-in, options persistence, test mode (ENC6 held at boot), simulated SD removal, keymap config, README.
-6. **Later: TEMPO and WAVE.** daisycola phase 6: shim superset: TIM16 MIDI clock, `MidiManager`'s `GetUartHandle`/`DmaTransmit`, `f_opendir`/`readdir`, `GetUs`. Use their card profiles and the tempo/wave libDaisy fork headers.
+6. **Connections menu.** Route every CHAMPI input and output to other JACK/PipeWire ports from the `F8` overlay, save the routing, and restore it at start and on hotplug.
+7. **Later: TEMPO and WAVE.** daisycola phase 6: shim superset: TIM16 MIDI clock, `MidiManager`'s `GetUartHandle`/`DmaTransmit`, `f_opendir`/`readdir`, `GetUs`. Use their card profiles and the tempo/wave libDaisy fork headers.
 
 ## Verification
 - **Unit tests.** daisycola already covers the quadrature generator through the firmware's real `ChompiEncoder`, the 4021 debounce, WS2812 decoding of the firmware's real `fill_led_data`, and FatFS mkfs, seeding with the TAPE card and read-back. `champi-tests` covers the CHOMPI board model:

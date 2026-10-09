@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "DistrhoPluginInfo.h"
 #include "app.h"
 #include "jack_monitor.h"
+#include "routing.h"
 #include "sd_cli.h"
 
 int dpf_jack_main(int argc, char* argv[]);
@@ -41,7 +43,11 @@ namespace
 void PrintUsage()
 {
     std::printf("Usage: champi [options]\n\n"
-                "  --no-connect        don't connect master out and MIDI controllers\n"
+                "  --no-connect        don't connect anything on start, saved connections\n"
+                "                      included (the F8 menu still works)\n"
+                "  --connections <file>\n"
+                "                      the connections the F8 menu saves and restores\n"
+                "                      (default ~/.config/champi/connections.toml)\n"
                 "  --skin <dir>        panel art: logo.png, chompi.png, play.png, loop.png\n"
                 "                      (default ~/.config/champi/skin; each file is optional)\n"
                 "  --keymap <file>     computer keys for the panel, over the defaults\n"
@@ -65,6 +71,8 @@ int main(int argc, char** argv)
         Options().skin_dir = config / "skin";
     std::filesystem::path keymap;
     bool                  print_keymap = false;
+    std::filesystem::path connections;
+    std::optional<SavedRouting> saved;
     try
     {
         std::vector<std::string> rest;
@@ -90,6 +98,12 @@ int main(int argc, char** argv)
                     throw std::invalid_argument("--keymap needs a file");
                 keymap = args[i];
             }
+            else if(arg == "--connections")
+            {
+                if(++i == args.size())
+                    throw std::invalid_argument("--connections needs a file");
+                connections = args[i];
+            }
             else if(arg == "--print-keymap")
                 print_keymap = true;
             else if(arg == "--test-mode")
@@ -109,6 +123,12 @@ int main(int argc, char** argv)
             std::fputs(Options().keymap.ToToml().c_str(), stdout);
             return 0;
         }
+
+        // A file the menu hasn't written yet means the defaults, given by name or not.
+        if(connections.empty() && !config.empty())
+            connections = config / "connections.toml";
+        if(!connections.empty())
+            saved = SavedRouting::Load(connections);
 
         const SdOptions sd = ParseSdOptions(args);
         RunSdCommands(sd);
@@ -134,6 +154,7 @@ int main(int argc, char** argv)
     dpf_argv.push_back(nullptr);
 
     JackMonitor monitor;
-    monitor.Open(DISTRHO_PLUGIN_NAME, connect);
+    if(monitor.Open(DISTRHO_PLUGIN_NAME, connect, connections, std::move(saved)))
+        Options().routing = &monitor;
     return dpf_jack_main(int(dpf_argv.size() - 1), dpf_argv.data());
 }

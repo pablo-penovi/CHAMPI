@@ -147,6 +147,9 @@ class MouseControl
     bool Press(float x, float y, Clock::time_point now);
     void Move(float x, float y, Clock::time_point now);
     void Release(Clock::time_point now);
+    /** Lets go of whatever the button holds, without a release's click: the panel stopped
+     *  taking the mouse. */
+    void Cancel();
     /** The wheel turned by `steps` (up is positive) at x, y. Returns false if it's not over an
      *  encoder or the USB socket. */
     bool Scroll(float x, float y, float steps, Clock::time_point now);
