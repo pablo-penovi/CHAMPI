@@ -10,7 +10,7 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 ## Status
 
-Early work: the repo skeleton is in place (submodules and CMake), but nothing runs yet. The work
+Early work: the TAPE firmware compiles and links against daisycola, but nothing runs yet. The work
 is split into chunks, each ending in something that builds and has tests. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
@@ -43,7 +43,7 @@ docs/                  design and planning documents
 ## Building
 
 You need gcc, CMake 3.20 or newer, and access to the private daisycola repo. For now the build
-only compiles daisycola against the TAPE libDaisy fork.
+compiles the TAPE firmware into `libchampi_fw_tape.a` and links it into a test program.
 
 ```sh
 git clone --recurse-submodules git@github.com:pablo-penovi/CHAMPI.git
@@ -52,7 +52,8 @@ cmake -B build
 cmake --build build
 ```
 
-In an existing clone, run `git submodule update --init --recursive` first.
+In an existing clone, run `git submodule update --init --recursive` first. Run the tests with
+`ctest --test-dir build`.
 
 ## Documentation
 

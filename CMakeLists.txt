@@ -45,3 +45,10 @@ add_subdirectory(third_party/daisycola)
 set(DPF_LIBRARIES OFF CACHE BOOL "Build the DPF libraries" FORCE)
 set(DPF_EXAMPLES OFF CACHE BOOL "Build the DPF examples" FORCE)
 add_subdirectory(third_party/DPF)
+
+# --- CHAMPI --------------------------------------------------------------------------------------
+
+add_subdirectory(core)
+
+enable_testing()
+add_subdirectory(tests)
