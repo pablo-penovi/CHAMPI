@@ -16,9 +16,17 @@ add_executable(champi_fw_tape_link fw_tape_link.cpp)
 target_link_libraries(champi_fw_tape_link PRIVATE champi_fw_tape champi_warnings)
 add_test(NAME champi_fw_tape_link COMMAND champi_fw_tape_link)
 
+# TAPE's encoder code, for the board tests to read the panel through, as chompi::Hardware does.
+set(TAPE ${CHOMPI_DIR}/firmware/chompi-tape/code)
+add_library(champi_test_tape_encoder STATIC ${TAPE}/src/encoder.cpp)
+target_include_directories(champi_test_tape_encoder SYSTEM PUBLIC ${TAPE}/src)
+target_link_libraries(champi_test_tape_encoder PUBLIC daisycola PRIVATE champi_firmware_flags)
+
 add_executable(champi-tests
+    board_test.cpp
     sd_card_test.cpp
     sd_cli_test.cpp
 )
-target_link_libraries(champi-tests PRIVATE champi_sd champi_warnings GTest::gtest_main)
+target_link_libraries(champi-tests PRIVATE
+    champi_board champi_sd champi_test_tape_encoder champi_warnings GTest::gtest_main)
 gtest_discover_tests(champi-tests DISCOVERY_MODE PRE_TEST)

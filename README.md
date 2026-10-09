@@ -10,8 +10,9 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 ## Status
 
-Early work: the TAPE firmware compiles and links against daisycola, and the virtual SD card works,
-but the firmware doesn't run yet. The work
+Early work: the TAPE firmware compiles and links against daisycola, the virtual SD card works, and
+the CHOMPI board model (panel wiring, battery charger, LED layout) is in place, but the firmware
+doesn't run yet. The work
 is split into chunks, each ending in something that builds and has tests. Progress is tracked in
 [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
