@@ -15,6 +15,19 @@ if(NOT CHOMPI_FIRMWARE STREQUAL "tape")
     message(FATAL_ERROR "CHOMPI_FIRMWARE=${CHOMPI_FIRMWARE} is not supported yet; only tape is")
 endif()
 
+# Sanitizer flags set here reach every target, the firmware and daisycola included. daisycola's own
+# DAISYCOLA_SANITIZER only reaches its directory, so CHAMPI sets both.
+set(CHAMPI_SANITIZER "" CACHE STRING "Build with a sanitizer: thread, address or empty")
+set_property(CACHE CHAMPI_SANITIZER PROPERTY STRINGS "" thread address)
+if(CHAMPI_SANITIZER)
+    if(NOT CHAMPI_SANITIZER MATCHES "^(thread|address)$")
+        message(FATAL_ERROR "CHAMPI_SANITIZER must be thread, address or empty")
+    endif()
+    add_compile_options(-fsanitize=${CHAMPI_SANITIZER} -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=${CHAMPI_SANITIZER})
+endif()
+set(DAISYCOLA_SANITIZER "${CHAMPI_SANITIZER}" CACHE STRING "Set from CHAMPI_SANITIZER" FORCE)
+
 set(CHAMPI_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 set(CHOMPI_DIR ${CHAMPI_THIRD_PARTY}/CHOMPI)
 

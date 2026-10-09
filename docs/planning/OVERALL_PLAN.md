@@ -18,11 +18,15 @@ the daisycola phase each one needs is in brackets.
 daisycola phases 1–5 are done and pushed (`e9ab6a0`). TAPE links against it unchanged, boots
 headless from the factory card on the signal-based virtual MCU, and the suite is clean under TSan
 and ASan. So the daisycola side of chunks 1–4 is finished and the CHAMPI side of each is smaller
-than first planned. One phase 5 check is left open: once chunk 4 uses `daisycola/host.h` for
-real, tidy it if it needs it. Phase 6 (TEMPO and WAVE) is for later, with chunk 9.
+than first planned. Chunk 4 closed the last phase 5 check: using `daisycola/host.h` for real only
+turned up the audio bug below. Phase 6 (TEMPO and WAVE) is for later, with chunk 9.
 
 Chunk 3 moved CHAMPI's pin to `7230242`: I2C `TransmitBlocking` now waits for a DMA read running
 on the same bus, as libDaisy's does. TAPE's medium-battery check depends on that.
+
+Chunk 4 moved it to `6a8bc75`, which fixes the 24-bit sample round trip. libDaisy's `s242f`
+sign-extends a raw 24-bit word, but daisycola passed it the whole int32, so every negative sample
+came out about 2.0 too low. That closes phase 5: `host.h` needed nothing else to run TAPE for real.
 
 Where building daisycola changed the detailed plan, daisycola's
 [design notes](https://github.com/pablo-penovi/daisycola/blob/main/docs/design-notes.md) win. In
@@ -193,6 +197,37 @@ CHAMPI/
 - **Done when:** the headless golden tests pass (boot rainbow in the LED log, KEY1 plays the
   slot-1 sample at the right pitch, an encoder turn changes the pitch, a preset save survives a
   restart), and the suite is clean under TSan and ASan.
+- As built:
+  - `core/runtime` (`champi_runtime`) is the process's `Runtime`. `Start` inserts the card, wires
+    `PanelState` and `Mp2722`, sets the audio clock and starts `chompi_fw_main`. `Booted` reads
+    TAPE's own `booting` and `rainbow_done` flags. `Stop` waits for `SdBusy` to clear, halts the
+    firmware and closes the image. Chunk 5 reuses it with `AudioClock::kHost`.
+  - `__asan_default_options` (`protect_shadow_gap=0`) lives in `runtime.cpp`, so every program
+    that runs the firmware gets it. daisycola doesn't ship an `asan_sdram` target: its own tests
+    define the option themselves, and CHAMPI needs it in one place only.
+  - `champi-headless --script <file> [--wav <file>] [--log <file>]` runs a line-based script
+    (`tools/script.h`: `boot`, `wait`, `key`, `push`, `turn`, `toggle`, `linein`, `midi`, `usb`,
+    `battery`, `mark`) in real time on daisycola's internal audio clock. The WAV is the master
+    output (TAPE's outputs 3 and 4) as 32-bit float stereo. The log has a line per event,
+    `<ms> <frame> <event>`: the script's commands, `booted`, and `leds` with all 35 colours
+    whenever they change. So it's the LED log and the event timeline in one file.
+  - TAPE ignores the panel for about 5 s after boot while the rainbow plays (16 ms redraws, as on
+    the device). Scripts wait 6 s after `boot`.
+  - After boot TAPE is in JAMMI mode on slot 15, its built-in sample: a C4 sine (261.63 Hz) on the
+    right channel. The golden tests use that sample instead of slot 1, because its pitch is
+    known exactly. KEY8 plays C4 and KEY1 plays C3. The tests check the pitch to 0.5%.
+  - The speed knob is ENC4 (the firmware's encoder 0). The test turns it +20 and -40 detents and
+    checks the pitch against TAPE's own speed curve, at 0.003 per detent.
+  - The preset test is the device's own save flow: raise the speed, hold CHOMPI, press save
+    (KEY25), pick slot 1 (KEY1), release CHOMPI, then press it again. It checks that
+    `presets.json` and `jammi_a1.wav` changed on the card. A second process on the same image
+    then selects slot 1 in the shift menu and checks KEY8 plays at the saved speed.
+  - The golden tests (`champi-headless-tests`) run the real binary in a subprocess, so the
+    sanitizer builds check it too. `CHAMPI_SANITIZER=thread|address` adds the flags at the top
+    level, so they reach CHAMPI, the firmware and daisycola, and sets `DAISYCOLA_SANITIZER` to
+    match. All 33 tests pass under both.
+  - The master output peaks at about 0.027 when one key plays the built-in sample at the factory
+    settings. Whether that matches the device is still to check.
 
 ### 5. DPF app: audio and MIDI only
 - DPF's CMake is already loaded (chunk 0). `dpf_add_plugin(champi TARGETS jack ...)` builds
