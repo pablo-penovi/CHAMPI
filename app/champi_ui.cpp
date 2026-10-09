@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 #include <string>
 #include <utility>
 
@@ -292,15 +293,325 @@ class ChampiUI : public UI
         fill();
     }
 
-    // Cream and gold outlines grouping the controls, as on the reference.
+    // The panel graphics, after the reference: cream line art grouping the controls, with arrows
+    // for the knobs' travel and small icons, and gold round the CHOMPI key and the scrub wheel.
     void DrawLineArt()
+    {
+        DrawChompiArt();
+        DrawKnobArt();
+        DrawScrubArt();
+        DrawVolumeArt();
+    }
+
+    // A path through `points`, each corner rounded by its own radius.
+    struct Corner
+    {
+        float x, y, r;
+    };
+    void RoundedPath(std::initializer_list<Corner> points)
+    {
+        const Corner* p = points.begin();
+        beginPath();
+        moveTo(p[0].x, p[0].y);
+        for(size_t i = 1; i + 1 < points.size(); i++)
+            arcTo(p[i].x, p[i].y, p[i + 1].x, p[i + 1].y, p[i].r);
+        lineTo(p[points.size() - 1].x, p[points.size() - 1].y);
+        stroke();
+    }
+
+    // A filled arrowhead with its tip at x, y, pointing along `angle`.
+    void Arrowhead(float x, float y, float angle, const Color& c)
+    {
+        constexpr float kLength = 1.4f, kHalfWidth = 0.8f;
+        const float     dx = std::cos(angle), dy = std::sin(angle);
+        const float     bx = x - dx * kLength, by = y - dy * kLength;
+        beginPath();
+        moveTo(x, y);
+        lineTo(bx - dy * kHalfWidth, by + dx * kHalfWidth);
+        lineTo(bx + dy * kHalfWidth, by - dx * kHalfWidth);
+        closePath();
+        fillColor(c);
+        fill();
+    }
+
+    // A cream arc round x, y from a0 clockwise to a1, with arrowheads on the ends asked for.
+    void ArcArrow(float x, float y, float r, float a0, float a1, bool head0, bool head1)
+    {
+        const float back = 1.2f / r; // the arc stops under the arrowhead
+        const float s = head0 ? a0 + back : a0, e = head1 ? a1 - back : a1;
+        beginPath();
+        arc(x, y, r, s, e, CW);
+        stroke();
+        // Each head carries on from where the arc stops, along its tangent.
+        if(head0)
+            Arrowhead(x + r * std::cos(s) + 1.4f * std::sin(s), y + r * std::sin(s) - 1.4f * std::cos(s),
+                      s - kPi / 2, kCream);
+        if(head1)
+            Arrowhead(x + r * std::cos(e) - 1.4f * std::sin(e), y + r * std::sin(e) + 1.4f * std::cos(e),
+                      e + kPi / 2, kCream);
+    }
+
+    // A rounded box filled in cream, for an icon.
+    void IconBox(float x, float y, float w, float h)
+    {
+        beginPath();
+        roundedRect(x - w / 2, y - h / 2, w, h, 0.8f);
+        fillColor(kCream);
+        fill();
+    }
+
+    // Three overlapping circles, one filled and marked with a plus or a star, as on the reference's
+    // shift icons. `ink` draws the circles and `paper` is what they're on.
+    void DrawCircleTrio(float x, float y, float r, int filled, bool star, const Color& ink, const Color& paper)
+    {
+        const float step = r * 1.12f;
+        auto        draw = [&](int i) {
+            const float cx = x + (i - 1) * step;
+            beginPath();
+            circle(cx, y, r);
+            fillColor(i == filled ? ink : paper);
+            fill();
+            strokeColor(ink);
+            stroke();
+            if(i != filled)
+                return;
+            const float g = r * 0.45f;
+            strokeColor(paper);
+            beginPath();
+            if(star)
+            {
+                for(int k = 0; k < 4; k++)
+                {
+                    const float a = k * kPi / 4;
+                    moveTo(cx - g * std::cos(a), y - g * std::sin(a));
+                    lineTo(cx + g * std::cos(a), y + g * std::sin(a));
+                }
+            }
+            else
+            {
+                moveTo(cx - g, y);
+                lineTo(cx + g, y);
+                moveTo(cx, y - g);
+                lineTo(cx, y + g);
+            }
+            stroke();
+        };
+        // The filled circle sits on top of the others.
+        if(filled == 0)
+            for(int i = 2; i >= 0; i--)
+                draw(i);
+        else
+            for(int i = 0; i <= 2; i++)
+                draw(i);
+    }
+
+    // The CHOMPI key and the toggle switch on one gold plate, framed in cream, with the toggle
+    // wired to the shift icons above and below it.
+    void DrawChompiArt()
+    {
+        const layout::Rect& c = layout::kChompiCutout;
+        const layout::Rect& t = layout::kToggleSlot;
+
+        const float px = c.x - 2, py = c.y - 1.9f, pw = c.w + 4, ph = c.h + 3.8f;
+        beginPath();
+        roundedRect(px, py, pw, ph, 1);
+        roundedRect(t.x - 2.25f, t.y - 1.85f, px - t.x + 3, t.h + 3.7f, 1);
+        fillColor(kGold);
+        fill();
+
+        strokeWidth(0.5f);
+        strokeColor(kCream);
+        const float right = px + pw + 2, top = py - 1.9f, bottom = py + ph + 1.9f;
+        RoundedPath({{px + 0.3f, top, 0}, {right, top, 1.6f}, {right, bottom, 1.6f}, {px + 0.3f, bottom, 0}});
+
+        // The icon boxes, the upper one outlined and the lower one filled.
+        const float bx = t.x - 2.95f, bw = 12.3f, bh = 7.3f;
+        const float upper = top - 0.45f + bh / 2, lower = bottom + 0.25f - bh / 2;
+        beginPath();
+        roundedRect(bx, upper - bh / 2, bw, bh, 0.8f);
+        stroke();
+        IconBox(bx + bw / 2, lower, bw, bh);
+        strokeWidth(0.4f);
+        DrawCircleTrio(bx + bw / 2, upper, 2.4f, 0, false, kCream, kBody);
+        DrawCircleTrio(bx + bw / 2, lower, 2.4f, 2, true, kBody, kCream);
+
+        // The wire: from the upper box down to the toggle, a meander, and on to the lower box.
+        strokeWidth(0.5f);
+        strokeColor(kCream);
+        const float spine = t.x - 8.35f, row = 1.6f, r = row / 2, y0 = t.y + 0.35f;
+        RoundedPath({{bx, upper, 0},
+                     {spine, upper, 1.2f},
+                     {spine, y0, r},
+                     {spine - 4.8f, y0, r},
+                     {spine - 4.8f, y0 + row, r},
+                     {t.x - 3.55f, y0 + row, r},
+                     {t.x - 3.55f, y0 + 2 * row, r},
+                     {spine - 2.7f, y0 + 2 * row, r},
+                     {spine - 2.7f, y0 + 3 * row, r},
+                     {t.x - 4.8f, y0 + 3 * row, r},
+                     {t.x - 4.8f, y0 + 4 * row, r},
+                     {spine, y0 + 4 * row, 1.2f},
+                     {spine, lower, 1.2f},
+                     {bx, lower, 0}});
+    }
+
+    // ENC4 (speed) and ENC3 (effect) have an arc over the top with an icon below; ENC1 and ENC2
+    // (start and end) share a box with the sample between its flags.
+    void DrawKnobArt()
+    {
+        constexpr float kArc = 11; // the arcs' radius round the small knobs
+        const float     y    = layout::kEncoder[0].y;
+        strokeWidth(0.5f);
+        strokeColor(kCream);
+
+        for(int e : {4, 3})
+        {
+            const float x = layout::kEncoder[e - 1].x;
+            ArcArrow(x, y, kArc, kPi * 2 / 3, kPi * 7 / 3, true, true);
+            IconBox(x, y + 14.6f, 9.2f, 7.4f);
+            if(e == 4)
+                DrawGauge(x, y + 14.6f);
+            else
+                DrawWand(x, y + 14.6f);
+            strokeWidth(0.5f);
+            strokeColor(kCream);
+        }
+
+        // The box: its top runs between the knobs' arcs, which carry on inwards to arrows.
+        const float x1 = layout::kEncoder[0].x, x2 = layout::kEncoder[1].x, bottom = 52.2f;
+        RoundedPath({{x1 - kArc, y, 0}, {x1 - kArc, bottom, 3}, {x2 + kArc, bottom, 3}, {x2 + kArc, y, 0}});
+        beginPath();
+        moveTo(x1, y - kArc);
+        lineTo(x2, y - kArc);
+        stroke();
+        ArcArrow(x1, y, kArc, kPi, kPi * 2.05f, false, true);
+        ArcArrow(x2, y, kArc, kPi * 0.95f, kPi * 2, true, false);
+        DrawSampleSketch(x1 - 4, x2 + 4, 49.5f);
+    }
+
+    // A sample between a start flag and an end flag: silence, a fade in, the sound, a fade out.
+    void DrawSampleSketch(float left, float right, float base)
+    {
+        strokeWidth(0.4f);
+        beginPath();
+        moveTo(left, base);
+        lineTo(right, base);
+        stroke();
+
+        // The flags, on poles with a knob on top; the start one points right, the end one left.
+        for(int side : {1, -1})
+        {
+            const float x = side > 0 ? left : right, top = base - 5.2f;
+            beginPath();
+            moveTo(x, base);
+            lineTo(x, top);
+            stroke();
+            Circle(x, top, 0.9f, kCream);
+            beginPath();
+            moveTo(x, top + 0.8f);
+            lineTo(x + side * 2.6f, top + 0.8f);
+            lineTo(x + side * 1.8f, top + 1.85f);
+            lineTo(x + side * 2.6f, top + 2.9f);
+            lineTo(x, top + 2.9f);
+            closePath();
+            fillColor(kCream);
+            fill();
+        }
+
+        const float mid = (left + right) / 2, level = base - 4.5f;
+        const float in0 = mid - 13.1f, in1 = mid - 9.3f, out0 = mid + 9.3f, out1 = mid + 13.1f;
+        const float s0 = mid - 7.3f, s1 = mid + 7.3f;
+        beginPath();
+        moveTo(in0, base);
+        bezierTo((in0 + in1) / 2, base, (in0 + in1) / 2, level, in1, level);
+        lineTo(s0, level);
+        // The sound: narrow peaks of different heights, dipping a little under the level.
+        constexpr int kSteps  = 90;
+        constexpr float kCycles = 3.5f;
+        const float     peaks[] = {3.0f, 4.6f, 3.6f, 2.2f};
+        for(int i = 1; i <= kSteps; i++)
+        {
+            const float t = float(i) / kSteps, w = std::sin(t * kCycles * 2 * kPi);
+            const float h = w > 0 ? peaks[std::min(3, int(t * kCycles))] : 1.0f;
+            lineTo(s0 + (s1 - s0) * t, level - w * h);
+        }
+        lineTo(out0, level);
+        bezierTo((out0 + out1) / 2, level, (out0 + out1) / 2, base, out1, base);
+        stroke();
+
+        // Dotted lines down from where the sound starts and stops.
+        for(float x : {in1, out0})
+            for(float dy = 0.8f; dy < base - level - 0.4f; dy += 0.9f)
+                Circle(x, level + dy, 0.3f, kCream);
+    }
+
+    // A speedometer, in the body colour on an icon box.
+    void DrawGauge(float x, float y)
+    {
+        strokeColor(kBody);
+        strokeWidth(0.45f);
+        const float cy = y + 1.1f, r = 2.9f;
+        beginPath();
+        arc(x, cy, r, kPi, 2 * kPi, CW);
+        stroke();
+        beginPath();
+        for(int i = 0; i <= 4; i++)
+        {
+            const float a = kPi + kPi * (i + 0.5f) / 5.5f;
+            moveTo(x + r * 0.62f * std::cos(a), cy + r * 0.62f * std::sin(a));
+            lineTo(x + r * 0.82f * std::cos(a), cy + r * 0.82f * std::sin(a));
+        }
+        moveTo(x, cy);
+        lineTo(x + 1.4f, cy - 1.6f);
+        moveTo(x - r - 0.6f, cy + 1.0f);
+        lineTo(x + r + 0.6f, cy + 1.0f);
+        moveTo(x - r + 0.4f, cy + 2.0f);
+        lineTo(x + r - 0.4f, cy + 2.0f);
+        stroke();
+        Circle(x, cy, 1.1f, kBody);
+    }
+
+    // A magic wand with a star and sparkles.
+    void DrawWand(float x, float y)
+    {
+        strokeColor(kBody);
+        strokeWidth(0.55f);
+        lineCap(ROUND);
+        beginPath();
+        moveTo(x - 3.2f, y + 2.8f);
+        lineTo(x + 0.2f, y - 0.6f);
+        stroke();
+        const float sx = x + 1.1f, sy = y - 1.5f;
+        beginPath();
+        for(int i = 0; i < 10; i++)
+        {
+            const float a = -kPi / 2 + i * kPi / 5, r = i % 2 ? 0.75f : 1.8f;
+            if(i == 0)
+                moveTo(sx + r * std::cos(a), sy + r * std::sin(a));
+            else
+                lineTo(sx + r * std::cos(a), sy + r * std::sin(a));
+        }
+        closePath();
+        strokeWidth(0.4f);
+        lineJoin(ROUND);
+        stroke();
+        for(const auto& p : {std::make_pair(-1.6f, -2.6f), std::make_pair(3.4f, -0.4f), std::make_pair(3.0f, 1.8f),
+                             std::make_pair(-0.4f, -3.1f)})
+            Circle(x + p.first, y + p.second, 0.5f, kBody);
+        lineCap(BUTT);
+        lineJoin(MITER);
+    }
+
+    // The scrub wheel and the play and loop keys: a gold outline round both, an arc saying the wheel
+    // turns both ways, the play and loop LEDs as two reels with a sound between them, and a cream
+    // frame with a cassette's lid.
+    void DrawScrubArt()
     {
         const layout::Circle& scrub = layout::kEncoder[4];
         const layout::Rect&   pl    = layout::kPlayLoopCutout;
-        const float           line  = 0.5f;
+        const float           line  = 1.0f;
 
-        // The scrub wheel and the play and loop keys in one outline: both shapes filled in gold,
-        // then in black a line's width smaller.
+        // Both shapes filled in gold, then in black a line's width smaller.
         auto capsule = [&](float grow, const Color& c) {
             const float r = scrub.d / 2 + 2.6f + grow;
             beginPath();
@@ -316,23 +627,128 @@ class ChampiUI : public UI
         capsule(line, kGold);
         capsule(0, kBody);
 
-        strokeWidth(line);
+        strokeWidth(0.5f);
         strokeColor(kCream);
-        auto box = [&](float x0, float x1) {
-            beginPath();
-            roundedRect(x0, layout::kEncoder[0].y - 12, x1 - x0, 24, 3);
-            stroke();
-        };
-        box(layout::kEncoder[0].x - 12.5f, layout::kEncoder[1].x + 12.5f); // ENC1 and ENC2
-        box(layout::kEncoder[2].x - 11.5f, layout::kEncoder[2].x + 11.5f); // ENC3
+        ArcArrow(scrub.x, scrub.y, scrub.d / 2 + 5, kPi * 0.72f, kPi * 1.28f, true, true);
 
-        // A gold frame round the CHOMPI key.
-        const layout::Rect& c = layout::kChompiCutout;
+        // «|» between ENC5's two LEDs: back, stop, forward.
+        const float cx = scrub.x, cy = layout::kEncoder5SecondLedWindow.y;
         beginPath();
-        roundedRect(c.x - 1.6f, c.y - 1.6f, c.w + 3.2f, c.h + 3.2f, 2.2f);
-        strokeWidth(0.9f);
-        strokeColor(kGold);
+        moveTo(cx, cy - 1.9f);
+        lineTo(cx, cy + 1.9f);
+        for(int side : {-1, 1})
+            for(float tip : {2.0f, 3.3f})
+            {
+                moveTo(cx + side * (tip - 0.9f), cy - 1.1f);
+                lineTo(cx + side * tip, cy);
+                lineTo(cx + side * (tip - 0.9f), cy + 1.1f);
+            }
+        strokeWidth(0.55f);
         stroke();
+        strokeWidth(0.5f);
+
+        // The frame, its top bumped up into the lid between the reels.
+        const float top = pl.y - 2.2f - line - 1.4f, bottom = pl.y + pl.h + 2.2f + line + 1.4f;
+        const float left = scrub.x + scrub.d / 2 + 2.6f + line + 0.4f, right = pl.x + pl.w + 4.5f;
+        const float lid = (layout::kKeyLedWindow[1].x + layout::kKeyLedWindow[2].x) / 2;
+        RoundedPath({{left, top, 0},
+                     {lid - 7.2f, top, 0.5f},
+                     {lid - 6.4f, top - 2.4f, 0.5f},
+                     {lid + 6.4f, top - 2.4f, 0.5f},
+                     {lid + 7.2f, top, 0.5f},
+                     {right, top, 1.6f},
+                     {right, bottom, 1.6f},
+                     {left, bottom, 0}});
+        beginPath();
+        roundedRect(lid - 4, top - 1.5f, 8, 0.6f, 0.3f);
+        fillColor(kCream);
+        fill();
+        Circle(lid - 5.1f, top - 1.2f, 0.7f, kCream);
+        Circle(lid + 5.1f, top - 1.2f, 0.7f, kCream);
+
+        // The reels round the play and loop LEDs.
+        for(int i : {1, 2})
+        {
+            const layout::Circle& w = layout::kKeyLedWindow[i];
+            beginPath();
+            circle(w.x, w.y, 5.1f);
+            strokeWidth(0.35f);
+            stroke();
+            strokeWidth(1.1f);
+            for(int k = 0; k < 8; k++)
+            {
+                const float a = k * kPi / 4 + kPi / 8;
+                beginPath();
+                arc(w.x, w.y, 4.0f, a - 0.28f, a + 0.28f, CW);
+                stroke();
+            }
+        }
+
+        // The sound between them, swelling in the middle.
+        const float s0 = layout::kKeyLedWindow[1].x + 5.1f, s1 = layout::kKeyLedWindow[2].x - 5.1f;
+        const float sy = layout::kKeyLedWindow[1].y;
+        strokeWidth(0.4f);
+        beginPath();
+        moveTo(s0, sy);
+        constexpr int kSteps = 60;
+        for(int i = 1; i <= kSteps; i++)
+        {
+            const float t = float(i) / kSteps, env = std::sin(t * kPi);
+            lineTo(s0 + (s1 - s0) * t, sy - 1.9f * env * env * std::sin(t * 5 * 2 * kPi));
+        }
+        stroke();
+    }
+
+    // ENC6 (volume) in a ring, between the mic, wired to the mic grille, and the power.
+    void DrawVolumeArt()
+    {
+        const layout::Circle& v    = layout::kEncoder[5];
+        const layout::Rect&   grille = layout::kMicSlots[2];
+        const float           ring = 11.5f, disc = 2.9f;
+        strokeWidth(0.5f);
+        strokeColor(kCream);
+        beginPath();
+        circle(v.x, v.y, ring);
+        stroke();
+
+        const float mic = v.x - ring - disc + 0.2f, power = v.x + ring + disc - 0.2f;
+        const float gx = grille.x + grille.w / 2, gy = grille.y + grille.h / 2 + 7;
+        beginPath();
+        moveTo(gx, gy);
+        lineTo(gx, gy + 3.8f);
+        bezierTo(gx, gy + 5.6f, mic, gy + 4.6f, mic, gy + 7);
+        lineTo(mic, v.y - disc);
+        stroke();
+
+        Circle(mic, v.y, 2 * disc, kCream);
+        Circle(power, v.y, 2 * disc, kCream);
+
+        // A microphone.
+        strokeColor(kBody);
+        strokeWidth(0.4f);
+        beginPath();
+        roundedRect(mic - 0.6f, v.y - 1.9f, 1.2f, 2.4f, 0.6f);
+        fillColor(kBody);
+        fill();
+        beginPath();
+        arc(mic, v.y - 0.3f, 1.2f, 0, kPi, CW);
+        moveTo(mic, v.y + 0.9f);
+        lineTo(mic, v.y + 1.7f);
+        moveTo(mic - 0.8f, v.y + 1.7f);
+        lineTo(mic + 0.8f, v.y + 1.7f);
+        stroke();
+
+        // A lightning bolt.
+        beginPath();
+        moveTo(power + 0.5f, v.y - 2.0f);
+        lineTo(power - 1.0f, v.y + 0.3f);
+        lineTo(power + 0.1f, v.y + 0.3f);
+        lineTo(power - 0.5f, v.y + 2.0f);
+        lineTo(power + 1.0f, v.y - 0.4f);
+        lineTo(power - 0.1f, v.y - 0.4f);
+        closePath();
+        fillColor(kBody);
+        fill();
     }
 
     void DrawLogo()
@@ -477,12 +893,15 @@ class ChampiUI : public UI
         fontSize(3.4f);
         textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
         fillColor(kCream);
-        for(int k = 1; k <= 15; k++)
+        for(int k = 1; k <= 14; k++)
         {
             char label[4];
             std::snprintf(label, sizeof label, "%d", k);
             text(layout::kKey[k - 1].x, 99.6f, label, nullptr);
         }
+        // KEY15 has the shift icon instead of a number, as on the reference.
+        strokeWidth(0.35f);
+        DrawCircleTrio(layout::kKey[14].x, 99.6f, 1.6f, 2, false, kCream, kBody);
     }
 
     void DrawEncoder(int e)
@@ -580,16 +999,6 @@ class ChampiUI : public UI
         roundedRect(s.x + 0.6f, ly, s.w - 1.2f, lh, 0.6f);
         fillPaint(linearGradient(0, ly, 0, ly + lh, Color(236, 236, 232), Color(140, 140, 136)));
         fill();
-        // Little brackets, as on the reference.
-        strokeColor(kCream);
-        strokeWidth(0.4f);
-        for(float y : {s.y - 3.2f, s.y + s.h + 3.2f})
-        {
-            beginPath();
-            moveTo(s.x - 6.5f, y);
-            lineTo(s.x + s.w + 6.5f, y);
-            stroke();
-        }
     }
 
     void DrawMic()
