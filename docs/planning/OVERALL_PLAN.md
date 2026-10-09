@@ -1,8 +1,43 @@
 # CHAMPI implementation plan
 
 CHAMPI is a native Linux virtual instrument that runs the real CHOMPI TAPE firmware on x86.
-The design is in [PORT.md](../PORT.md). This file splits that design into chunks. Each chunk ends
-with something that builds, has tests, and gets committed and pushed.
+The design is in [DETAILED_OVERALL_PLAN.md](DETAILED_OVERALL_PLAN.md) (formerly `PORT.md`). This
+file splits that design into chunks. Each chunk ends with something that builds, has tests, and
+gets committed and pushed.
+
+The libDaisy replacement (the "shim" in the detailed plan) and the virtual MCU now live in a
+separate repo, [daisycola](https://github.com/pablo-penovi/daisycola), pulled in as a submodule.
+daisycola handles the generic Daisy parts: replacement libDaisy headers, interrupts, timers, GPIO,
+4021 shift registers, I2C, PWM DMA, the SD-card image and audio/MIDI plumbing. CHAMPI keeps
+everything specific to the CHOMPI board and the app: panel wiring, the MP2722 charger model, the
+WS2812 LED layout, the headless runner, DPF and the UI. Chunks 1–4 are split between the two repos;
+the daisycola phase each one needs is in brackets.
+
+## daisycola status (2026-10-08)
+
+daisycola phases 1–5 are done and pushed (`e9ab6a0`). TAPE links against it unchanged, boots
+headless from the factory card on the signal-based virtual MCU, and the suite is clean under TSan
+and ASan. So the daisycola side of chunks 1–4 is finished and the CHAMPI side of each is smaller
+than first planned. One phase 5 check is left open: once chunk 4 uses `daisycola/host.h` for
+real, tidy it if it needs it. Phase 6 (TEMPO and WAVE) is for later, with chunk 9.
+
+Where building daisycola changed the detailed plan, daisycola's
+[design notes](https://github.com/pablo-penovi/daisycola/blob/main/docs/design-notes.md) win. In
+short:
+
+- Interrupt priorities follow the NVIC: audio, I2C, UART, LED DMA and USB are all priority 0 and
+  don't preempt each other; the timers are priority 15. Not "audio, then TIM4, then the rest".
+- TIM4 runs at about 4.4 kHz, not 1 kHz, because libDaisy truncates TAPE's period to 16 bits. The
+  device does the same.
+- The WS2812 decoder counts a pulse longer than half a bit as 1 (the ⅔ rule misreads TAPE), and
+  returns exactly the 25 SMT and 10 PTH LEDs, porch slots dropped. SMT is GRB, PTH is RGB.
+- Encoders step one Gray-code state every 3 ms, not one per poll.
+- The 4021 chips are modelled at the pin level; the fork's debounce code runs as written.
+- MIDI in raises the UART/USB receive interrupt.
+- The single-lock fallback was never needed and doesn't exist.
+- A halted firmware can't restart: one firmware run per process.
+- Under ASan, the host executable must set `protect_shadow_gap=0` (via `__asan_default_options` or
+  the environment) for TAPE's raw SDRAM writes.
 
 ## Progress
 
@@ -10,24 +45,25 @@ Tick a chunk's box when its PR is merged into `main`.
 
 | Done | # | Chunk | Done when |
 |:---:|---|---|---|
-| ☐ | 0 | Repo skeleton: the CHOMPI and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
-| ☐ | 1 | The real TAPE firmware sources compile and link against placeholder hardware stand-ins | No missing pieces at link time |
-| ☐ | 2 | Virtual SD card: FatFS on a disk-image file, formatting, seeding with the factory card, import/export | Format, seed and read-back test passes |
-| ☐ | 3 | Models of each piece of hardware (shift registers, encoders, battery charger, LEDs), no threading yet | Unit tests pass, using the firmware's own encoder and LED code |
-| ☐ | 4 | Emulated chip that runs the firmware's interrupts in priority order, plus the headless runner | Recorded-output tests pass (boot, playing keys, encoders, presets) and sanitizers are clean |
+| ☐ | 0 | Repo skeleton: the CHOMPI, daisycola and DPF submodules, CMake, README, licence and trademark note | An empty build runs and is pushed |
+| ☐ | 1 | The real TAPE firmware sources compile and link against daisycola's stubs [daisycola 1] | No missing pieces at link time |
+| ☐ | 2 | Virtual SD card: seeding the daisycola image with the factory card, import/export commands [daisycola 2] | Format, seed and read-back test passes |
+| ☐ | 3 | CHOMPI board model on top of daisycola: key and encoder wiring, battery charger, LED layout; no threading yet [daisycola 3] | Unit tests pass, using the firmware's own encoder and LED code |
+| ☐ | 4 | Firmware running on daisycola's virtual MCU, plus the headless runner [daisycola 4] | Recorded-output tests pass (boot, playing keys, encoders, presets) and sanitizers are clean |
 | ☐ | 5 | DPF app with audio and MIDI only, and a rough placeholder screen | A MIDI controller plays it through JACK with no audio dropouts |
 | ☐ | 6 | The real panel: vector drawing, layout taken from the `.brd` files, LED rendering, mouse control | It looks like the reference image and plays fully by mouse |
 | ☐ | 7 | Computer keyboard control with a configurable keymap | It plays fully without the mouse |
-| ☐ | 8 | Polish: shift menus, looper and recording, test mode, removing the SD card, encoder feel, README | Everything in PORT.md's milestone 5 is covered |
-| ☐ | 9 | Later: TEMPO and WAVE | |
+| ☐ | 8 | Polish: shift menus, looper and recording, test mode, removing the SD card, encoder feel, README | Everything in the detailed plan's milestone 5 is covered |
+| ☐ | 9 | Later: TEMPO and WAVE [daisycola 6] | |
 
-Biggest risks: chunk 1 (the bundled libDaisy is a modified fork, so the stand-in may grow) and
-chunk 4 (signal-based interrupt emulation is the most fragile part; a single-lock fallback is
-described below).
+Both original big risks are settled in daisycola: the fork turned out manageable (chunk 1), and the
+signal-based interrupts work under both sanitizers (chunk 4). The biggest risk now is chunk 5:
+real-time audio through JACK, with the firmware on its own thread fed by `ProcessAudio`, without
+xruns at a 64-frame buffer.
 
 ## Repo layout
 
-PORT.md puts the port inside the CHOMPI tree at `ports/linux/`. Here it lives in its own repo,
+The detailed plan puts the port inside the CHOMPI tree at `ports/linux/`. Here it lives in its own repo,
 so the layout moves up one level:
 
 ```
@@ -35,76 +71,86 @@ CHAMPI/
   CMakeLists.txt
   third_party/
     CHOMPI/        git submodule -> CHOMPI-Club/CHOMPI (firmware sources, card profiles, .brd files), never patched
+    daisycola/     git submodule -> pablo-penovi/daisycola (libDaisy replacement + virtual MCU)
     DPF/           git submodule -> DISTRHO/DPF
-  host-daisy/      libDaisy hardware shim
-  core/            virtual hardware + firmware build + runtime
+  core/            firmware build, CHOMPI board model (wiring, MP2722, LED layout), runtime glue
   app/             DPF plugin + NanoVG UI
   tools/           champi-headless, panel layout extractor
   tests/
-  docs/            PORT.md
-    planning/      OVERALL_PLAN.md (this file)
+  docs/
+    planning/      OVERALL_PLAN.md (this file), DETAILED_OVERALL_PLAN.md
 ```
 
 ## Chunk details
 
 ### 0. Repo skeleton
-- Add the submodules: CHOMPI pinned to `a73d732`, and DPF pinned to a release tag.
+- Add the submodules: CHOMPI pinned to `a73d732`, daisycola pinned to `e9ab6a0`, and DPF pinned
+  to a release tag.
 - Add a top-level CMake file with the `CHOMPI_FIRMWARE=tape` option, gnu++17, and warnings set
-  low for the firmware sources only.
+  low for the firmware sources only. Point daisycola's `DAISYCOLA_CHOMPI_DIR` at
+  `third_party/CHOMPI` (it derives the TAPE libDaisy fork from it), and turn
+  `DAISYCOLA_BUILD_TESTS` off.
 - Add the README (what this is, the trademark note, how to build), `.gitignore`, and an MIT
   LICENSE with credit to the CHOMPI Club code.
 - **Done when:** `cmake -B build && cmake --build build` runs an empty build, and the repo is
   pushed to GitHub.
 
-### 1. Compile and link TAPE against a stub shim
-- Write `host-daisy/include/...`, matching the vendored libDaisy fork's headers one for one.
-  Bodies are empty stubs for now.
-- Handle the portability snags on the shim side: the `Limiter.h` forwarder, empty section
-  macros, `-Dmain=chompi_fw_main`, and HAL/CMSIS stubs.
-- Build `core/firmware_tape` from the unmodified sources, together with DaisySP, coreJSON,
-  libDaisy `ui/`, `util/` and `hid/midi_parser`.
+### 1. Compile and link TAPE against daisycola [daisycola phase 1: done]
+- daisycola: done. Its `tests/tape/CMakeLists.txt` already builds TAPE this way and its
+  `tape_link` test passes.
+- CHAMPI: build `core/firmware_tape` the same way: DaisySP as its own library;
+  `chompi_main.cpp`, `encoder.cpp`, `FileStreamingManager.cpp` and `core_json.c` with
+  `-Dmain=chompi_fw_main` and `-w`; linked to daisycola. daisycola's include directories must come
+  before DaisySP's (it carries a `DelayLine` fix).
 - **Done when:** `libchampi_fw_tape.a` links into a test binary that references
   `chompi_fw_main`, with no undefined symbols.
-- **Risk:** this chunk shows how big the shim really is. If the fork's headers drift a lot
-  from upstream, the scope may grow here.
 
-### 2. Virtual SD card
-- Build the vendored `ff.c` with its `ffconf.h`, plus a host `diskio` that does
-  `pread`/`pwrite` on an image file.
-- Create the image: sparse 4 GB, formatted with `f_mkfs`, and seeded from
-  `card-profiles/tape-2.0/`.
-- Add the CLI commands `--sd-import`, `--sd-export` and `--sd-reset`.
+### 2. Virtual SD card [daisycola phase 2]
+- daisycola: done. `SdCreateImage` (MBR plus one FAT32 partition), `SdOpenImage`, `SdList`,
+  `SdCopyIn`/`SdCopyOut`, and `SdSetPresent` for removing the card.
+- CHAMPI: create the image at `~/.local/share/champi/sdcard.img` (sparse 4 GB), seed it from
+  `card-profiles/tape-2.0/`, and add `--sd-import`, `--sd-export` and `--sd-reset`.
 - **Done when:** a unit test runs mkfs, seeds the image, reads it back, and the file list
   matches the card profile.
 
-### 3. Peripheral models (pure logic, no threads)
-- `PanelState` atomics and the `LedFrame` triple buffer.
-- A ShiftRegister4021 model with the fork's debounce, `RawState` and edge detection.
-- A GPIO pin table.
-- An EC12 quadrature generator.
-- An MP2722 register model.
-- A WS2812 PWM/DMA decoder.
-- **Done when:** unit tests pass for the encoder through the real `ChompiEncoder`, the 4021
-  debounce, the `fill_led_data` round trip, and the MP2722 lockout check.
+### 3. CHOMPI board model (pure logic, no threads) [daisycola phase 3]
+- daisycola: done. Pin-level 4021 chains (`AttachSr4021`, `SetSrInputs`), time-stepped encoders
+  (`AttachEncoder`, `QueueDetents`), `I2CDevice` registration, PWM-DMA capture (`GetDmaFrame`) and
+  `Ws2812Decode`. Its tests already drive TAPE's own `ChompiEncoder` and LED driver, and its boot
+  test has a minimal fake MP2722.
+- CHAMPI adds what is specific to this board, on daisycola's public API only:
+  - `PanelState`: which key and encoder sits on which 4021 chain and bit or GPIO pin (`SwId`,
+    `EncoderSrId`, `seed::D0/D20/D10`, `D15/D17`, the toggle, jack-detect on `D21`), attached
+    through `AttachSr4021` and `AttachEncoder`.
+  - A full MP2722 register model at I2C address `0x3F`, growing from daisycola's test fake: VIN_GD
+    (register 0x12, bit 6) set, `mpc_int` (D31) held high, and a battery level the UI can set.
+  - The LED layout: decoded SMT (GRB) and PTH (RGB) LEDs mapped to panel positions in a
+    `LedFrame`. Porch slots are already gone after decoding.
+- **Done when:** unit tests pass for key presses through `SwId`, an encoder turn through
+  `PanelState`, a decoded LED frame landing in the right `LedFrame` slots, and the MP2722 lockout
+  check. daisycola's own `ChompiEncoder` and `fill_led_data` tests aren't repeated.
 
-### 4. Virtual MCU and headless runner (milestone 1 of PORT.md)
-- The MCU thread, with interrupts delivered as real-time signals at audio > TIM4 > LED-DMA
-  priority.
-- `__disable_irq` mapped onto the signal mask.
-- The 1 kHz `timer_create` for TIM4.
-- The SPSC audio ring and the block adapter.
-- `champi-headless`: script in, WAV and LED log out.
+### 4. Firmware on the virtual MCU, plus headless runner (milestone 1) [daisycola phase 4]
+- daisycola: done. The firmware thread, signal-based interrupts in NVIC priority order,
+  `__disable_irq`, timers, the audio rings (internal clock for headless, `ProcessAudio` for a
+  host), MIDI byte streams (`WriteMidiIn`, `ReadMidiOut`), STOP mode and `Wake`, and `Halt`.
+- CHAMPI: start `chompi_fw_main` with `daisycola::Start`, connect the board model from chunk 3,
+  and build `champi-headless`: script in, WAV and LED log out. daisycola has no event log, so the
+  runner builds the LED log itself from `GetDmaFrame`.
+- A firmware runs once per process, so the preset-survives-restart test runs two processes on one
+  image.
+- CHAMPI's ASan build defines `__asan_default_options` with `protect_shadow_gap=0`. Decide then
+  whether daisycola should ship that as an opt-in `daisycola::asan_sdram` target instead.
+- Feed back into daisycola anything `host.h` turned out to lack or get wrong; that closes daisycola
+  phase 5.
 - **Done when:** the headless golden tests pass (boot rainbow in the LED log, KEY1 plays the
   slot-1 sample at the right pitch, an encoder turn changes the pitch, a preset save survives a
   restart), and the suite is clean under TSan and ASan.
-- **Risk:** this is the hardest chunk. If signal delivery turns out unworkable (for example, an
-  ISR touches state that isn't async-signal-safe), the fallback is a single big-lock
-  "interrupt runner" thread that pre-empts the main loop at the firmware's own poll points.
-  That would cost a little fidelity.
 
 ### 5. DPF app: audio and MIDI only
 - The `ChompiPlugin` standalone JACK target, with 3 inputs and 4 outputs, and auto-connect for
-  master out.
+  master out. Audio runs on daisycola's host clock: `run()` calls `ProcessAudio`, which adds two
+  24-frame blocks (1 ms) of latency.
 - JACK MIDI in and out, merged into the virtual TRS UART, plus an optional ALSA-seq
   auto-connect.
 - libsamplerate when the host rate is not 48 kHz.
@@ -116,7 +162,7 @@ CHAMPI/
 - A layout extractor that reads the enclosure and main-board `.brd` files and writes
   `panel_layout.h`.
 - A NanoVG vector panel styled after `interface.jpg`, with a fixed-aspect resizable window.
-- LED rendering: undo the firmware's scaling, apply gamma, add a glow.
+- LED rendering from the `LedFrame`: undo the firmware's scaling, apply gamma, add a glow.
 - Mouse input: keys, encoder drag, scroll and push, the toggle switch, and the jack-detect
   toggle.
 - An optional user `skin/` folder; no art is committed.
@@ -124,28 +170,31 @@ CHAMPI/
   mouse.
 
 ### 7. Computer keyboard
-- Scancode mapping, with defaults from PORT.md §4.
+- Scancode mapping, with defaults from the detailed plan's §4.
 - `~/.config/champi/keymap.toml`.
 - Encoder select, turn and push from the keyboard.
 - **Done when:** everything on the panel can be played without the mouse.
 
-### 8. Fidelity and polish (milestone 5 of PORT.md)
+### 8. Fidelity and polish (milestone 5 of the detailed plan)
 - Check the shift-menu flows, the looper, and recording through mic and line-in.
 - Options persistence.
 - Test mode (ENC6 held at boot).
-- Simulated SD-card removal.
+- Simulated SD-card removal (`SdSetPresent`).
 - Encoder feel and acceleration tuning.
 - Write the full README.
 
 ### 9. Later: TEMPO and WAVE
-- A shim superset: TIM16 MIDI clock, `MidiManager` DMA transmit, `f_opendir`/`readdir`.
+- daisycola phase 6: TIM16 MIDI clock, `MidiManager` DMA transmit, `f_opendir`/`readdir`.
 - Their card profiles and the libDaisy fork headers for each.
 - Probably one chunk per firmware.
 
 ## Working agreement
 
 - Firmware comes from an upstream submodule (`CHOMPI-Club/CHOMPI` @ `a73d732`) and is never patched.
-- The product name is `champi`: binaries `champi` and `champi-headless`, config in `~/.config/champi`, data in `~/.local/share/champi`. Wherever PORT.md says `chompi-linux`, read `champi`.
+- The product name is `champi`: binaries `champi` and `champi-headless`, config in `~/.config/champi`, data in `~/.local/share/champi`. (The detailed plan first said `chompi-linux`.)
 - The GitHub repo `pablo-penovi/CHAMPI` is private.
+- The libDaisy replacement lives in `pablo-penovi/daisycola` (private), not here. Generic Daisy
+  work goes there; CHOMPI-specific work stays here. CHAMPI moves its daisycola pin forward only
+  in a chunk PR.
 - Each chunk gets its own branch (`chunk-N-<slug>`) and a PR into `main`. You review and merge.
-- After opening each PR I stop and summarise what changed and anything that deviated from PORT.md.
+- After opening each PR I stop and summarise what changed and anything that deviated from the detailed plan.
