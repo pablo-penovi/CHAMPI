@@ -63,6 +63,7 @@ add_subdirectory(third_party/DPF)
 
 add_subdirectory(core)
 add_subdirectory(tools)
+add_subdirectory(app)
 
 enable_testing()
 add_subdirectory(tests)

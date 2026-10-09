@@ -13,11 +13,12 @@ unchanged, against a host version of libDaisy's hardware layer. The firmware the
 
 ## Status
 
-Early work: the real TAPE firmware runs headless on daisycola's virtual MCU, from a virtual SD card,
-with the CHOMPI board model (panel wiring, battery charger, LED layout) around it.
-`champi-headless` plays it from a script and records the audio and LEDs. There's no app or UI yet.
-The work is split into chunks, each ending in something that builds and has tests. Progress is
-tracked in [docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
+Early work: the real TAPE firmware runs on daisycola's virtual MCU, from a virtual SD card, with
+the CHOMPI board model (panel wiring, battery charger, LED layout) around it. `champi` plays it
+through JACK or PipeWire with MIDI in and out, behind a placeholder panel. `champi-headless` plays
+it from a script and records the audio and LEDs. The work is split into chunks, each ending in
+something that builds and has tests. Progress is tracked in
+[docs/planning/OVERALL_PLAN.md](docs/planning/OVERALL_PLAN.md).
 
 ## Planned features
 
@@ -45,8 +46,9 @@ docs/                  design and planning documents
 
 ## Building
 
-You need gcc, CMake 3.20 or newer, and access to the private daisycola repo. For now the build
-compiles the TAPE firmware and builds `champi-headless`.
+You need gcc, CMake 3.20 or newer, access to the private daisycola repo, and the development
+packages for JACK, libsamplerate, OpenGL and X11. The build compiles the TAPE firmware and builds
+`champi` and `champi-headless`.
 
 ```sh
 git clone --recurse-submodules git@github.com:pablo-penovi/CHAMPI.git
@@ -58,6 +60,33 @@ cmake --build build
 In an existing clone, run `git submodule update --init --recursive` first. Run the tests with
 `ctest --test-dir build`. For a ThreadSanitizer or AddressSanitizer build, configure a separate
 build directory with `-DCHAMPI_SANITIZER=thread` or `-DCHAMPI_SANITIZER=address`.
+
+## Running the app
+
+```sh
+build/bin/champi
+```
+
+`champi` is a standalone JACK client named `CHAMPI`. Under PipeWire, `pipewire-jack` provides the
+JACK library, so no JACK server is needed. It has three inputs (`mic`, `line_l`, `line_r`), four
+outputs (`master_l`, `master_r`, `phones_l`, `phones_r`), a MIDI input (`events-in`) and a MIDI
+output (`midi-out`). At start it connects master out to the first two playback ports and every
+hardware MIDI source to its MIDI input; `--no-connect` turns that off. More controllers can be
+connected in qpwgraph or with `pw-link`. They all reach the firmware as its TRS MIDI input, on the
+channel set in `options.json` (channel 1 on the factory card).
+
+The firmware runs at 48 kHz. At other rates the audio is resampled with libsamplerate, which adds a
+little latency, so it's better to run the graph at 48 kHz. For a 64-frame buffer:
+
+```sh
+PIPEWIRE_QUANTUM=64/48000 build/bin/champi
+```
+
+The panel is a placeholder for now: click keys, scroll over an encoder to turn it, click an
+encoder to push it, and click the toggle and mic/line boxes to flip them. The bottom line shows the
+rate and buffer size, the share of each cycle the firmware takes (load), JACK xruns, late blocks
+(cycles where the firmware didn't finish in time) and resampler dropouts. The same counts are
+printed on exit. `champi` takes the same SD-card options as `champi-headless`.
 
 ## Headless runs
 
@@ -94,6 +123,9 @@ build/tools/champi-headless --sd-import ~/samples   # copy a directory's content
 build/tools/champi-headless --sd-export ~/card      # copy the whole card out
 build/tools/champi-headless --sd-reset              # start again from the factory card
 ```
+
+`champi` takes the same options. Given `--sd-reset`, `--sd-import` or `--sd-export`, it runs them
+and exits instead of starting.
 
 `--sd-image <file>` uses another image. The image is an MBR disk with one FAT32 partition, so it
 can also be loop-mounted or used with mtools.
