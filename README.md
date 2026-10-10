@@ -32,7 +32,8 @@ as-is and I make no promises concerning quality or security.
   timers and DMA behaving as on the chip.
 - **An on-screen panel** laid out from the CHOMPI board files, drawn as vectors, with live LEDs.
 - **Play it** with the mouse, the computer keyboard (with a configurable keymap) or any number of
-  MIDI controllers.
+  MIDI controllers, whose knobs, keys and pads can be mapped to the panel's controls from a menu
+  and are remembered per controller.
 - **A standalone JACK app**, which also runs under PipeWire, built with
   [DPF](https://github.com/DISTRHO/DPF). It has mic and line inputs, master and headphone outputs,
   and MIDI in and out, which a built-in menu connects and reconnects on the next start.
@@ -209,7 +210,8 @@ without qpwgraph. Nothing on the panel shows it; `F8` or `Esc` closes it. While 
 takes no input.
 
 The menu has two columns: the inputs (mic, line in, MIDI in) and the outputs (master, phones, MIDI
-out). Each row says what it's connected to. Open a row to list the ports it can connect to,
+out), and under them a row that opens the [MIDI controller mapping](#midi-controller-mapping). Each
+row says what it's connected to. Open a row to list the ports it can connect to,
 grouped by device, and tick or untick them. Stereo pairs are one row: ticking a stereo port
 connects L to L and R to R, and a mono port gets both sides. To route each side on its own, tick
 "Route left and right separately" at the top of the list. A pair connected one side at a time is
@@ -266,6 +268,57 @@ Every controller connected to `events-in` reaches TAPE as its TRS MIDI input, on
 
 TAPE sends what you play on `midi-out`: notes for the keys, CCs for the encoders and the CHOMPI,
 play and loop keys, on the MIDI out channel from `options.json`.
+
+### MIDI controller mapping
+
+The row under the inputs and outputs in the `F8` menu, "MIDI controller mapping", maps a
+controller's knobs, faders, keys, pads and buttons to the panel's controls. It shows a table with
+CHAMPI's controls down the left and what the controller connected to MIDI in has mapped to each:
+
+- each knob's rotation and press, Knob 1–6 numbered left to right as on the panel (knob 1 is the
+  speed knob next to the CHAMPI button, knob 5 the scrub wheel and knob 6 the volume),
+- the CHAMPI, play and loop buttons and the toggle switch,
+- Keys 1–25.
+
+`Up` and `Down` move through the table. Press `Enter` (or click a row) and then press, turn or move
+the control on the controller. A press is learnt from its first note or CC. For a rotation, keep
+turning until the row has heard six CCs. CHAMPI then tells a knob or fader with ends (absolute)
+from an endless encoder (relative), and which of the three common relative encodings it sends.
+`Left`/`Right` changes that if it guessed wrong, `Delete` unmaps a row, and `Esc` cancels learning
+and then goes back.
+
+- A mapped key, button or knob press is held from its note-on to its note-off, or while its CC is
+  64 or above. The toggle flips on each press.
+- An endless encoder turns its knob a detent per step, faster when turned fast, as the mouse does.
+- An absolute knob or fader becomes TAPE's own CC for that knob (CC20–25, on the MIDI in channel
+  from `options.json`), so it sets the knob's value as TAPE intends. As with TAPE's own CCs, these
+  do nothing while the shift menu is open, and the scrub wheel's only acts while the looper plays.
+  To work the shift menu from a controller, map the knob to an endless encoder instead.
+- Messages that aren't mapped reach TAPE as before, so its own MIDI (notes on the keys, CC20–27)
+  still works alongside a mapping.
+- While a row is learning, notes and CCs go to the menu instead of TAPE.
+
+Mappings belong to the port connected to MIDI in, and come back whenever that controller is
+connected again. A port whose PipeWire name gains or loses a `-62` suffix is still found, as in
+`connections.toml`. Every controller arrives on CHAMPI's one MIDI input, so CHAMPI can't tell
+which one sent a message. With several connected, all their mappings apply together, the first
+controller's winning where two map the same thing, and `Tab` picks which one the table shows.
+
+Each controller's mapping is saved as it changes, in its own file in
+`~/.config/champi/midi-mappings/`:
+
+```toml
+controller = "Midi-Bridge:KeyStep 32 (capture)"
+knob_1 = "cc 74 ch 1 relative-64"
+knob_4 = "cc 10 ch 1 absolute"
+play = "note 36 ch 10"
+toggle = "cc 9 ch 1"
+```
+
+A rotation takes a CC and then `absolute`, `relative-64` (64 is still), `relative-twos` (two's
+complement: 1 is clockwise, 127 back) or `relative-signed` (1 is clockwise, 65 back). The other
+controls (`knob_1_push`, `chompi`, `play`, `loop`, `toggle`, `key_1` to `key_25`) take a note or a
+CC. A mistake in a file stops `champi` with the line number.
 
 ### Skin
 

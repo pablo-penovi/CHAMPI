@@ -3,7 +3,8 @@
 // art, white keys and knobs, the purple scrub wheel and the coloured CHOMPI, play and loop keys.
 //
 // The connections key (F8) opens the connections menu over the panel (ConnectionsMenu); nothing on
-// the panel shows it. While it's open the panel takes no input.
+// the panel shows it. While it's open the panel takes no input, though MIDI still plays it. The
+// menu's MIDI controller mapping is saved from here and played by the plugin (MidiMapper).
 //
 // Drawing is in panel millimetres; the panel is scaled to fit the window, with the status line
 // underneath. A skin folder can replace the logo and the glyphs on the CHOMPI, play and loop keys
@@ -24,6 +25,7 @@
 #include "connections_menu.h"
 #include "keyboard.h"
 #include "led_frame.h"
+#include "midi_map.h"
 #include "panel.h"
 #include "runtime.h"
 
@@ -115,6 +117,7 @@ class ChampiUI : public UI
         // repeats the turn keys itself.
         getWindow().setIgnoringKeyRepeat(true);
         menu_.SetLevels(champi::Options().audio_levels);
+        menu_.Mapping().SetMappings(champi::Options().midi_mappings);
     }
 
   protected:
@@ -137,7 +140,11 @@ class ChampiUI : public UI
                 routing_version_ = snapshot->version;
                 routing_ready_   = snapshot->graph.champi_present;
                 menu_.SetSnapshot(*snapshot);
+                // The controllers on MIDI in may have changed, and with them the mapping.
+                graph_ = snapshot->graph;
+                PlayMapping();
             }
+        LearnMidi();
 
         // Load figures twice a second, so the peak covers half a second.
         const auto now = std::chrono::steady_clock::now();
@@ -206,6 +213,7 @@ class ChampiUI : public UI
                 Fit().ToPanel(ev.pos, x, y);
                 Send(menu_.Click(x, y));
                 ApplyLevels();
+                SaveMapping();
             }
             return true;
         }
@@ -258,6 +266,7 @@ class ChampiUI : public UI
             {
                 MenuKey(code);
                 ApplyLevels();
+                SaveMapping();
             }
             return true;
         }
@@ -323,6 +332,7 @@ class ChampiUI : public UI
             case KEY_ENTER:
             case KEY_KPENTER:
             case KEY_SPACE: Send(menu_.Activate()); break;
+            case KEY_DELETE: menu_.Clear(); break;
             case KEY_ESC:
             case KEY_BACKSPACE:
                 if(!menu_.Back())
@@ -351,6 +361,63 @@ class ChampiUI : public UI
         {
             std::fprintf(stderr, "champi: can't save the volumes: %s\n", e.what());
         }
+    }
+
+    // While the mapping waits for a control, the plugin hands it what MIDI comes in instead of
+    // playing it.
+    void LearnMidi()
+    {
+        champi::MidiMapper&      map      = Plugin().MidiMap();
+        champi::MidiMappingMenu& mapping  = menu_.Mapping();
+        auto                     learning = [&] { return menu_open_ && menu_.InMapping() && mapping.Learning(); };
+        if(learning() != map.Learning())
+            map.SetLearning(learning());
+        uint8_t message[3];
+        while(learning() && map.PopHeard(message))
+            if(mapping.Feed(message))
+            {
+                map.SetLearning(false);
+                SaveMapping();
+            }
+    }
+
+    // Saves the controllers whose mapping the menu changed, and plays the result.
+    void SaveMapping()
+    {
+        const std::vector<std::string> changed = menu_.Mapping().TakeChanged();
+        if(changed.empty())
+            return;
+        champi::MidiMappings& mappings = champi::Options().midi_mappings;
+        mappings                       = menu_.Mapping().Mappings();
+        const auto& dir                = champi::Options().midi_mappings_dir;
+        for(const std::string& controller : changed)
+        {
+            if(dir.empty())
+                break;
+            try
+            {
+                mappings.Save(controller, dir);
+            }
+            catch(const std::exception& e)
+            {
+                std::fprintf(stderr, "champi: can't save the MIDI mapping for %s: %s\n", controller.c_str(), e.what());
+            }
+        }
+        // Saving names new controllers' files; the menu keeps them for the next save.
+        menu_.Mapping().SetMappings(mappings);
+        PlayMapping();
+    }
+
+    void PlayMapping()
+    {
+        Plugin().MidiMap().SetMapping(champi::ActiveMapping(champi::Options().midi_mappings, graph_));
+    }
+
+    // "client: port", as the menu lists a port; the name as it is if it's not on the graph.
+    std::string PortLabel(const std::string& name) const
+    {
+        const champi::PeerPort* p = graph_.Find(name);
+        return p ? p->Client() + ": " + p->Label() : name;
     }
 
     void Send(std::vector<champi::RouteChange> changes)
@@ -1038,7 +1105,7 @@ class ChampiUI : public UI
         champi::PanelState&   panel  = champi::Runtime::Get().Panel();
         const layout::Circle  knob   = champi::Knob(e);
         const bool            pushed = panel.EncoderPushed(e);
-        const int             turned = mouse_.Turned(e) + keyboard_.Turned(e);
+        const int             turned = mouse_.Turned(e) + keyboard_.Turned(e) + Plugin().MidiMap().Turned(e);
         const float           angle  = -kPi / 2 + 2 * kPi * turned / champi::kDetentsPerTurn;
         const float           x = knob.x, y = knob.y;
 
@@ -1083,11 +1150,18 @@ class ChampiUI : public UI
         circle(x, y, r);
         fillPaint(radialGradient(x - r * 0.3f, y - r * 0.4f, r * 0.2f, r * 1.1f, top, Color(196, 196, 192)));
         fill();
-        beginPath(); // the pointer
-        moveTo(x + r * 0.2f * std::cos(angle), y + r * 0.2f * std::sin(angle));
-        lineTo(x + r * 0.8f * std::cos(angle), y + r * 0.8f * std::sin(angle));
-        strokeColor(Color(50, 50, 52));
-        strokeWidth(0.8f);
+        // Grip ridges all round instead of a pointer: the encoders turn endlessly and have no zero to
+        // point at, but the ridges still show the knob turning, a detent at a time.
+        constexpr int kRidges = 8;
+        beginPath();
+        for(int i = 0; i < kRidges; i++)
+        {
+            const float a = angle + 2 * kPi * i / kRidges;
+            moveTo(x + r * 0.55f * std::cos(a), y + r * 0.55f * std::sin(a));
+            lineTo(x + r * 0.85f * std::cos(a), y + r * 0.85f * std::sin(a));
+        }
+        strokeColor(Color(120, 120, 122));
+        strokeWidth(0.5f);
         lineCap(ROUND);
         stroke();
         lineCap(BUTT);
@@ -1271,16 +1345,25 @@ class ChampiUI : public UI
         text(b.x + Menu::kPad, Menu::kTitleY, "Connections", nullptr);
 
         const std::string close = MenuKeyName() + " or Esc closes";
-        const char* hint = !MenuReady() ? close.c_str()
-                           : menu_.InPeers() ? "Enter or Space ticks    Esc goes back"
-                                             : nullptr;
-        const bool        level = !menu_.InPeers() && Menu::HasLevel(menu_.OpenRow());
-        const std::string first = std::string(level ? "Left/Right sets the volume    Tab switches column    " : "")
-                                  + "Enter opens a port    " + close;
+        std::string       hint;
+        if(!MenuReady())
+            hint = close;
+        else if(menu_.InMapping())
+            hint = MappingHint();
+        else if(menu_.InPeers())
+            hint = "Enter or Space ticks    Esc goes back";
+        else if(menu_.MappingSelected())
+            hint = "Enter opens the mapping    " + close;
+        else
+        {
+            const bool level = Menu::HasLevel(menu_.OpenRow());
+            hint = std::string(level ? "Left/Right sets the volume    Tab switches column    " : "") + "Enter opens a port    "
+                   + close;
+        }
         fontSize(2.8f);
         textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
         fillColor(kStatusText);
-        text(b.x + b.w - Menu::kPad, Menu::kTitleY, hint ? hint : first.c_str(), nullptr);
+        text(b.x + b.w - Menu::kPad, Menu::kTitleY, hint.c_str(), nullptr);
 
         if(!MenuReady())
         {
@@ -1293,10 +1376,26 @@ class ChampiUI : public UI
                  nullptr);
             return;
         }
-        if(menu_.InPeers())
+        if(menu_.InMapping())
+            DrawMenuMapping();
+        else if(menu_.InPeers())
             DrawMenuPeers();
         else
             DrawMenuPorts();
+    }
+
+    std::string MappingHint() const
+    {
+        const champi::MidiMappingMenu& mapping = menu_.Mapping();
+        if(mapping.Controllers().empty())
+            return "Esc goes back";
+        if(mapping.Learning())
+            return "Press or turn the control on your controller    Esc cancels";
+        const bool turn = champi::MidiTargetAt(mapping.Selected()).kind == champi::MidiTarget::Kind::kKnobTurn;
+        const bool bound = mapping.Binding(mapping.Selected()).Bound();
+        return std::string("Enter learns    ") + (bound ? "Delete unmaps    " : "")
+               + (turn && bound ? "Left/Right: how it reads    " : "")
+               + (mapping.Controllers().size() > 1 ? "Tab: next controller    " : "") + "Esc goes back";
     }
 
     std::string MenuKeyName() const
@@ -1321,7 +1420,7 @@ class ChampiUI : public UI
             {
                 const Menu::Row&   row      = rows[r];
                 const layout::Rect rr       = Menu::RowRect(c, r);
-                const bool         selected = menu_.SelectedColumn() == c && menu_.SelectedRow() == r;
+                const bool         selected = !menu_.MappingSelected() && menu_.SelectedColumn() == c && menu_.SelectedRow() == r;
                 beginPath();
                 roundedRect(rr.x, rr.y, rr.w, rr.h, 1.2f);
                 fillColor(selected ? kMenuSelected : Color(32, 32, 35));
@@ -1356,6 +1455,51 @@ class ChampiUI : public UI
                     DrawLevel(bar, menu_.RowLevel(row));
             }
         }
+        DrawMappingRow();
+    }
+
+    // The row under both columns that opens the MIDI controller mapping.
+    void DrawMappingRow()
+    {
+        using Menu                     = champi::ConnectionsMenu;
+        const layout::Rect&      rr      = Menu::kMappingRow;
+        const champi::MidiMappingMenu& mapping = menu_.Mapping();
+        const bool               selected = menu_.MappingSelected();
+        fontSize(3.0f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kGold);
+        text(rr.x + 1, Menu::kMappingTitleY, "MIDI CONTROLLERS", nullptr);
+
+        beginPath();
+        roundedRect(rr.x, rr.y, rr.w, rr.h, 1.2f);
+        fillColor(selected ? kMenuSelected : Color(32, 32, 35));
+        fill();
+        if(selected)
+        {
+            strokeColor(kGold);
+            strokeWidth(0.35f);
+            stroke();
+        }
+
+        // Each controller on MIDI in, and how much of the panel it has mapped.
+        std::string summary;
+        for(const std::string& port : mapping.Controllers())
+        {
+            const champi::MidiProfile* profile = mapping.Mappings().ForPort(graph_, port);
+            const int                  count   = profile ? profile->Count() : 0;
+            summary += (summary.empty() ? "" : ",  ") + PortLabel(port) + " ("
+                       + (count ? std::to_string(count) + (count == 1 ? " control" : " controls") : "nothing")
+                       + " mapped)";
+        }
+        scissor(rr.x, rr.y, rr.w - 1.5f, rr.h);
+        fontSize(3.6f);
+        fillColor(kCream);
+        text(rr.x + 3, rr.y + 4.4f, "MIDI controller mapping", nullptr);
+        fontSize(2.7f);
+        fillColor(summary.empty() ? kMenuMissing : kStatusText);
+        text(rr.x + 3, rr.y + 9.4f, summary.empty() ? "no controller is connected to MIDI in" : summary.c_str(),
+             nullptr);
+        resetScissor();
     }
 
     // A volume bar with its figure above it.
@@ -1388,16 +1532,7 @@ class ChampiUI : public UI
         using Item             = Menu::Item;
         const Menu::Row&   row = menu_.OpenRow();
         const layout::Rect& k  = Menu::kBack;
-
-        beginPath();
-        roundedRect(k.x, k.y, k.w, k.h, 1);
-        strokeColor(kStatusText);
-        strokeWidth(0.3f);
-        stroke();
-        fontSize(2.9f);
-        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        fillColor(kStatusText);
-        text(k.x + k.w / 2, k.y + k.h / 2, "< Back", nullptr);
+        DrawBackButton();
 
         const bool        input = champi::kChampiPorts[row.ports[0]].input;
         const std::string title = row.label + (input ? ": connect from" : ": connect to");
@@ -1464,6 +1599,126 @@ class ChampiUI : public UI
         }
     }
 
+    void DrawBackButton()
+    {
+        const layout::Rect& k = champi::ConnectionsMenu::kBack;
+        beginPath();
+        roundedRect(k.x, k.y, k.w, k.h, 1);
+        strokeColor(kStatusText);
+        strokeWidth(0.3f);
+        stroke();
+        fontSize(2.9f);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        fillColor(kStatusText);
+        text(k.x + k.w / 2, k.y + k.h / 2, "< Back", nullptr);
+    }
+
+    // The MIDI controller mapping: CHAMPI's controls down the left, and what the controller has
+    // mapped to each on the right.
+    void DrawMenuMapping()
+    {
+        using Mapping                          = champi::MidiMappingMenu;
+        const Mapping&      mapping            = menu_.Mapping();
+        const layout::Rect& k                  = champi::ConnectionsMenu::kBack;
+        const auto&         controllers        = mapping.Controllers();
+        DrawBackButton();
+
+        std::string title = "MIDI controller mapping";
+        if(!controllers.empty())
+            title += ": " + PortLabel(mapping.Controller());
+        if(controllers.size() > 1)
+            title += "    (" + std::to_string(mapping.SelectedController() + 1) + " of "
+                     + std::to_string(controllers.size()) + ")";
+        fontSize(3.6f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(k.x + k.w + 3, champi::ConnectionsMenu::kSubtitleY, title.c_str(), nullptr);
+
+        const layout::Rect table = Mapping::Table();
+        if(controllers.empty())
+        {
+            fontSize(3.2f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kMenuMissing);
+            text(table.x + 3, Mapping::HeadingY() + 2,
+                 "No MIDI controller is connected to MIDI in. Connect one under Inputs > MIDI in first.", nullptr);
+            return;
+        }
+
+        const float label_x = table.x + 3, hint_x = table.x + 36, binding_x = Mapping::BindingX();
+        fontSize(2.9f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kGold);
+        text(label_x, Mapping::HeadingY(), "CHAMPI CONTROL", nullptr);
+        text(binding_x, Mapping::HeadingY(), "MAPPED TO", nullptr);
+
+        scissor(table.x, table.y, table.w, table.h);
+        const int last = std::min(champi::kNumMidiTargets, mapping.FirstVisible() + Mapping::VisibleLines() + 1);
+        for(int i = mapping.FirstVisible(); i < last; i++)
+        {
+            const layout::Rect r        = mapping.LineRect(i);
+            const float        cy       = r.y + r.h / 2;
+            const bool         selected = i == mapping.Selected();
+            const bool         turn     = champi::MidiTargetAt(i).kind == champi::MidiTarget::Kind::kKnobTurn;
+            if(selected)
+            {
+                beginPath();
+                roundedRect(r.x, r.y + 0.3f, r.w - 3, r.h - 0.6f, 1);
+                fillColor(kMenuSelected);
+                fill();
+            }
+            fontSize(3.2f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kCream);
+            text(label_x, cy, champi::MidiTargetLabel(i).c_str(), nullptr);
+            // NanoVG won't draw an empty string.
+            if(const std::string hint = champi::MidiTargetHint(i); !hint.empty())
+            {
+                fontSize(2.7f);
+                fillColor(kStatusText);
+                text(hint_x, cy, hint.c_str(), nullptr);
+            }
+
+            const champi::MidiBinding binding = mapping.Binding(i);
+            std::string               what;
+            Color                     ink = kCream;
+            if(selected && mapping.Learning())
+            {
+                ink = kGold;
+                if(mapping.Heard() > 0)
+                    what = champi::MidiBindingLabel(mapping.Hearing(), false) + ": keep turning ("
+                           + std::to_string(mapping.Heard()) + " of " + std::to_string(champi::MidiLearner::kTurnMessages)
+                           + ")";
+                else
+                    what = turn ? "Turn the knob or encoder on your controller..."
+                                : "Press the key, pad or button on your controller...";
+            }
+            else if(binding.Bound())
+                what = champi::MidiBindingLabel(binding, turn);
+            else
+            {
+                what = "not mapped";
+                ink  = kMenuMissing;
+            }
+            fontSize(3.2f);
+            fillColor(ink);
+            text(binding_x, cy, what.c_str(), nullptr);
+        }
+        resetScissor();
+
+        // A scroll bar: the table is longer than the box.
+        const int lines = Mapping::VisibleLines();
+        if(champi::kNumMidiTargets > lines)
+        {
+            const float h = table.h * lines / champi::kNumMidiTargets;
+            const float y = table.y + (table.h - h) * mapping.FirstVisible() / float(champi::kNumMidiTargets - lines);
+            beginPath();
+            roundedRect(table.x + table.w - 1.2f, y, 1.2f, h, 0.6f);
+            fillColor(kStatusText);
+            fill();
+        }
+    }
+
     void DrawCheckbox(float x, float y, champi::ConnectionsMenu::Tick tick, bool missing)
     {
         using Tick           = champi::ConnectionsMenu::Tick;
@@ -1509,6 +1764,7 @@ class ChampiUI : public UI
     bool                                  menu_open_       = false;
     uint64_t                              routing_version_ = 0;
     bool                                  routing_ready_   = false; // CHAMPI's ports are listed
+    champi::Graph                         graph_; // the latest, for the controllers on MIDI in
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChampiUI)
 };

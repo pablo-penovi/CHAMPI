@@ -586,19 +586,65 @@ TEST(ConnectionsMenu, MovingStaysOnTheRows)
     menu.SetSnapshot(Snapshot(jack));
     menu.Move(0, -1);
     EXPECT_EQ(menu.SelectedRow(), 0);
-    menu.Move(0, 9);
+    menu.Move(0, 2);
     EXPECT_EQ(menu.SelectedRow(), 2);
     menu.Move(-1, 0);
     EXPECT_EQ(menu.SelectedColumn(), 0);
     menu.Move(5, 0);
     EXPECT_EQ(menu.SelectedColumn(), 1);
     EXPECT_EQ(menu.SelectedRow(), 2);
+    EXPECT_FALSE(menu.MappingSelected());
     menu.Move(0, -9);
     EXPECT_EQ(menu.SelectedRow(), 0);
     // Nothing fits Master: only the split line.
     menu.Activate();
     EXPECT_EQ(Lines(menu), std::vector<std::string>{"[ ] Route left and right separately"});
     EXPECT_EQ(menu.SelectedItem(), 0);
+}
+
+TEST(ConnectionsMenu, TheMappingRowIsUnderBothColumns)
+{
+    FakeJack        jack;
+    ConnectionsMenu menu;
+    menu.SetSnapshot(Snapshot(jack));
+
+    // Down off the last row of either column reaches it; up goes back to that column.
+    menu.Move(0, 9);
+    EXPECT_TRUE(menu.MappingSelected());
+    menu.Move(1, 0); // nothing to the side
+    menu.SwitchColumn();
+    EXPECT_TRUE(menu.MappingSelected());
+    menu.Move(0, -1);
+    EXPECT_FALSE(menu.MappingSelected());
+    EXPECT_EQ(menu.SelectedColumn(), 0);
+    EXPECT_EQ(menu.SelectedRow(), 2);
+    menu.SwitchColumn();
+    menu.Move(0, 1);
+    EXPECT_TRUE(menu.MappingSelected());
+    menu.Move(0, -2);
+    EXPECT_EQ(menu.SelectedColumn(), 1);
+    EXPECT_EQ(menu.SelectedRow(), 1);
+
+    // Enter opens it, and Esc closes it again; a click opens it too.
+    menu.Page(1);
+    menu.Move(0, 1);
+    EXPECT_TRUE(menu.Activate().empty());
+    EXPECT_TRUE(menu.InMapping());
+    EXPECT_FALSE(menu.InPeers());
+    EXPECT_TRUE(menu.Back());
+    EXPECT_FALSE(menu.InMapping());
+    EXPECT_TRUE(menu.MappingSelected());
+    EXPECT_FALSE(menu.Back());
+
+    const auto [x, y] = Centre(ConnectionsMenu::kMappingRow);
+    menu.Click(x, y);
+    EXPECT_TRUE(menu.InMapping());
+    const auto [bx, by] = Centre(ConnectionsMenu::kBack);
+    menu.Click(bx, by);
+    EXPECT_FALSE(menu.InMapping());
+    menu.Activate();
+    menu.Reset(); // closed and opened again
+    EXPECT_FALSE(menu.InMapping());
 }
 
 TEST(ConnectionsMenu, TheSelectionFollowsItsPortWhenTheGraphChanges)

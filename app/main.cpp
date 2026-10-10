@@ -139,6 +139,9 @@ int main(int argc, char** argv)
                 levels = AudioLevels::Load(config / "input_levels.toml");
             if(levels)
                 Options().audio_levels = *levels;
+
+            Options().midi_mappings_dir = MidiMappingsDir(config);
+            Options().midi_mappings     = MidiMappings::Load(Options().midi_mappings_dir);
         }
 
         const SdOptions sd = ParseSdOptions(args);
