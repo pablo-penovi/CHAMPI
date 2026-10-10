@@ -95,7 +95,8 @@ build/bin/champi
 `champi` is a standalone JACK client named `CHAMPI`. Under PipeWire, `pipewire-jack` provides the
 JACK library, so no JACK server is needed. It has three inputs (`mic`, `line_l`, `line_r`), four
 outputs (`master_l`, `master_r`, `phones_l`, `phones_r`), a MIDI input (`events-in`) and a MIDI
-output (`midi-out`). At first it connects master out to the first two playback ports and every
+output (`midi-out`). Only one output pair plays at a time: master, or phones while headphones
+are plugged in (see below). At first it connects master out to the first two playback ports and every
 hardware MIDI source to its MIDI input. `F8` opens the [connections menu](#connections), which
 connects any of its ports and remembers them for the next start.
 
@@ -137,6 +138,8 @@ The panel is laid out from the CHOMPI's own board files. Everything on it works 
 - **The toggle switch**: click to flip it: lever up is record mode (off), down is playback (on).
 - **Line in** (the jack at the right edge): click to plug or unplug a cable. Without a plug, TAPE
   records from the mic.
+- **Phones** (the jack below line in): click to plug or unplug headphones. With them in, sound
+  comes out of the phones outputs and master is silent; without them, the other way round.
 - **USB** (the socket at the front, bottom left): click to plug or unplug USB power. Scroll over it
   to set the battery voltage, between 2.8 V and 4.2 V (full). Its label shows the voltage.
 - **SD card** (the slot at the front, bottom right): click to pull the card out or put it back.
@@ -169,6 +172,7 @@ the keys in the same places. These are the defaults:
 | `` ` `` | flip the toggle switch |
 | `F9` | pull the SD card out, or put it back |
 | `F10` | plug or unplug USB power |
+| `F11` | plug or unplug headphones |
 | `F12` | plug or unplug line in |
 | `F8` | open or close the [connections menu](#connections) |
 
@@ -187,8 +191,8 @@ and edit it. Each line sets an action to a key, a list of keys or `[]`, as in
 default. A key with no name can be given by its Linux scancode. `--keymap <file>` reads another
 file. A mistake in the file stops `champi` with the line number.
 
-The actions are `key_1` to `key_25`, `chompi`, `play`, `loop`, `toggle`, `line_in`, `usb`,
-`sd_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right`, `push` and `connections`.
+The actions are `key_1` to `key_25`, `chompi`, `play`, `loop`, `toggle`, `line_in`, `phones`,
+`usb`, `sd_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right`, `push` and `connections`.
 
 ### Connections
 
@@ -207,11 +211,16 @@ Mouse: click a row to open it, click a port to tick it, `< Back` to go back, and
 list. Keys: arrows to move, `Tab` to switch columns, `Enter` or `Space` to open or tick, `Page
 Up`/`Page Down`, `Esc` (or `Backspace`) to go back a level.
 
-**Input volume.** With the mic or line in selected, a volume bar shows on the right of its row:
-`Left` and `Right` turn it down and up in 5% steps, or click on the bar to set it. 100% passes the
-input as it is; volumes follow a cubic curve, as PipeWire's do, so 50% is about -18 dB. A split
-line in has a volume per side. The volumes are saved to `~/.config/champi/input_levels.toml`
-(`mic = 60` and so on) and applied at the next start.
+**Volume.** With an audio row selected (mic, line in, master or phones), a volume bar shows on the
+right of the row: `Left` and `Right` turn it down and up in 5% steps, or click on the bar to set
+it. Volumes follow a cubic curve, as PipeWire's do, so halving one is about -18 dB. An input passes
+as it is at 100%. An output starts at 50%, which passes the firmware's sound as it is, and goes up to
++18 dB at 100%: the firmware divides its eight voices' sum by eight, so a note or two plays far
+quieter than other programs, and the boost makes that up. A big chord boosted all the way can clip.
+A split pair has a volume per side. An output's volume is applied after the firmware, on top of
+the volume knob (ENC6). The volumes are saved to `~/.config/champi/audio_levels.toml`
+(`mic = 60`, `master_l = 80` and so on) and applied at the next start; an `input_levels.toml`
+from an earlier version is read if there's no `audio_levels.toml` yet.
 
 The menu's changes are saved to `~/.config/champi/connections.toml`, and restored at the next
 start and whenever a saved port appears, so a USB interface or controller plugged in later gets

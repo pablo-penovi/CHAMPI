@@ -65,6 +65,7 @@ void PanelState::Attach()
     daisycola::SetPin(kEnc5Push, true);
     SetToggle(true);
     SetLineIn(false);
+    SetPhones(false);
 }
 
 void PanelState::SetKey(int key, bool pressed)

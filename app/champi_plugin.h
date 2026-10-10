@@ -6,6 +6,7 @@
 #pragma once
 
 #include "DistrhoPlugin.hpp"
+#include "audio_levels.h"
 #include "host_audio.h"
 #include "midi_splitter.h"
 
@@ -20,8 +21,8 @@ class ChampiPlugin : public Plugin
     /** The audio load figures, for the UI. */
     champi::AudioLoad Load() { return audio_.Load(); }
 
-    /** Sets host input `input`'s gain (see InputLevels). Any thread. */
-    void SetInputGain(size_t input, float gain) { audio_.SetInputGain(input, gain); }
+    /** Sets the gains of the host's inputs and outputs to the volumes. Any thread. */
+    void SetLevels(const champi::AudioLevels& levels);
 
     /** True if the host doesn't run at 48 kHz, so audio is resampled. */
     bool Resampling() const { return audio_.Resampling(); }

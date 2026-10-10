@@ -132,9 +132,13 @@ int main(int argc, char** argv)
 
         if(!config.empty())
         {
-            Options().input_levels_path = config / "input_levels.toml";
-            if(auto levels = InputLevels::Load(Options().input_levels_path))
-                Options().input_levels = *levels;
+            // input_levels.toml held the input volumes before the outputs had any.
+            Options().audio_levels_path = config / "audio_levels.toml";
+            auto levels                 = AudioLevels::Load(Options().audio_levels_path);
+            if(!levels)
+                levels = AudioLevels::Load(config / "input_levels.toml");
+            if(levels)
+                Options().audio_levels = *levels;
         }
 
         const SdOptions sd = ParseSdOptions(args);

@@ -116,7 +116,14 @@ TEST(HostAudio, MapsChannelsAt48k)
     EXPECT_EQ(g_seen_in[3], b.in_ptr[2]); // line R
     EXPECT_EQ(b.out[0][10], 3.f);         // master L is the firmware's output 3
     EXPECT_EQ(b.out[1][10], 4.f);
-    EXPECT_EQ(b.out[2][10], 1.f); // phones
+    EXPECT_EQ(b.out[2][10], 0.f); // phones, silent with nothing in the headphone jack
+    EXPECT_EQ(b.out[3][10], 0.f);
+
+    audio.SetPhones(true);
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[0][10], 0.f); // master, silent with headphones in
+    EXPECT_EQ(b.out[1][10], 0.f);
+    EXPECT_EQ(b.out[2][10], 1.f); // phones are the firmware's outputs 1 and 2
     EXPECT_EQ(b.out[3][10], 2.f);
 }
 
@@ -133,6 +140,22 @@ TEST(HostAudio, AppliesInputGains)
     audio.Run(b.in_ptr, b.out_ptr, 64);
     EXPECT_EQ(b.out[0][10], 0.125f);
     EXPECT_EQ(b.in[0][10], 0.5f) << "the host's buffer is left alone";
+}
+
+TEST(HostAudio, AppliesOutputGains)
+{
+    HostAudio audio(Constants);
+    audio.Prepare(48000, 64);
+    Buffers b(64);
+    audio.SetOutputGain(0, 0.5f); // master L
+    audio.SetOutputGain(3, 0.f);  // phones R
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[0][10], 1.5f);
+    EXPECT_EQ(b.out[1][10], 4.f);
+    audio.SetPhones(true);
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[2][10], 1.f);
+    EXPECT_EQ(b.out[3][10], 0.f);
 }
 
 TEST(HostAudio, CountsLateBlocksOnceRunning)
@@ -169,6 +192,10 @@ TEST(HostAudio, ResamplesAtSteadyRate)
     EXPECT_EQ(audio.Load().dropouts, 0u);
     EXPECT_NEAR(b.out[0][32], 3.f, 1e-3);
     EXPECT_NEAR(b.out[1][32], 4.f, 1e-3);
+    EXPECT_EQ(b.out[2][32], 0.f);
+    audio.SetPhones(true);
+    audio.Run(b.in_ptr, b.out_ptr, 64);
+    EXPECT_EQ(b.out[0][32], 0.f);
     EXPECT_NEAR(b.out[2][32], 1.f, 1e-3);
     EXPECT_NEAR(b.out[3][32], 2.f, 1e-3);
 }

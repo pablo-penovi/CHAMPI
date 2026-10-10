@@ -1,4 +1,4 @@
-#include "input_levels.h"
+#include "audio_levels.h"
 
 #include <fstream>
 #include <set>
@@ -6,34 +6,31 @@
 #include <stdexcept>
 #include <system_error>
 
-#include "routing.h"
 #include "toml_lines.h"
 
 namespace champi
 {
-static_assert(kMic == 0 && kLineL == 1 && kLineR == 2, "input levels are indexed by CHAMPI port");
-
-InputLevels InputLevels::Parse(std::string_view toml, const std::string& source)
+AudioLevels AudioLevels::Parse(std::string_view toml, const std::string& source)
 {
-    InputLevels           levels;
+    AudioLevels           levels;
     std::set<std::string> seen;
     const auto lines = ParseTomlLines(toml, source, "a volume from 0 to 100",
-                                      "tables aren't used in input_levels.toml; write `input = volume` lines");
+                                      "tables aren't used in audio_levels.toml; write `port = volume` lines");
     for(const TomlLine& l : lines)
     {
-        const int input = ChampiPortByName(l.name);
-        if(input < 0 || input >= kInputs)
-            TomlFail(source, l.line, "CHAMPI has no audio input called \"" + l.name + "\"");
+        const int port = ChampiPortByName(l.name);
+        if(port < 0 || !Has(port))
+            TomlFail(source, l.line, "CHAMPI has no audio port called \"" + l.name + "\"");
         if(!seen.insert(l.name).second)
             TomlFail(source, l.line, l.name + " is set twice");
         if(l.is_array || l.values[0].is_string || l.values[0].number > kMax)
             TomlFail(source, l.line, "a volume is a number from 0 to 100");
-        levels.percent[input] = int(l.values[0].number);
+        levels.percent[port] = int(l.values[0].number);
     }
     return levels;
 }
 
-std::optional<InputLevels> InputLevels::Load(const std::filesystem::path& path)
+std::optional<AudioLevels> AudioLevels::Load(const std::filesystem::path& path)
 {
     std::error_code ec;
     if(!std::filesystem::exists(path, ec))
@@ -46,16 +43,17 @@ std::optional<InputLevels> InputLevels::Load(const std::filesystem::path& path)
     return Parse(text.str(), path.string());
 }
 
-std::string InputLevels::ToToml() const
+std::string AudioLevels::ToToml() const
 {
-    std::string out = "# The volume of CHAMPI's audio inputs, from 0 to 100, written by the connections\n"
-                      "# menu (F8). 100 passes an input as it is.\n\n";
-    for(int i = 0; i < kInputs; i++)
-        out += std::string(kChampiPorts[i].name) + " = " + std::to_string(percent[i]) + "\n";
+    std::string out = "# The volume of CHAMPI's audio ports, from 0 to 100, written by the connections\n"
+                      "# menu (F8). 100 passes an input as it is, and 50 an output.\n\n";
+    for(int i = 0; i < kNumChampiPorts; i++)
+        if(Has(i))
+            out += std::string(kChampiPorts[i].name) + " = " + std::to_string(percent[i]) + "\n";
     return out;
 }
 
-void InputLevels::Save(const std::filesystem::path& path) const
+void AudioLevels::Save(const std::filesystem::path& path) const
 {
     if(path.has_parent_path())
         std::filesystem::create_directories(path.parent_path());

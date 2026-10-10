@@ -13,8 +13,7 @@ START_NAMESPACE_DISTRHO
 
 ChampiPlugin::ChampiPlugin() : Plugin(0, 0, 0), audio_(daisycola::ProcessAudio)
 {
-    for(int i = 0; i < champi::InputLevels::kInputs; i++)
-        audio_.SetInputGain(size_t(i), champi::InputLevels::Gain(champi::Options().input_levels.percent[i]));
+    SetLevels(champi::Options().audio_levels);
     try
     {
         // In test mode ENC6 starts pushed; the UI lets go of it once the firmware has booted.
@@ -27,6 +26,19 @@ ChampiPlugin::ChampiPlugin() : Plugin(0, 0, 0), audio_(daisycola::ProcessAudio)
         std::fprintf(stderr, "champi: %s\n", e.what());
         std::_Exit(1);
     }
+}
+
+void ChampiPlugin::SetLevels(const champi::AudioLevels& levels)
+{
+    // Host inputs are CHAMPI's ports mic to line R, and host outputs master L to phones R.
+    static_assert(champi::kMic == 0 && champi::kLineR == champi::kHostInputs - 1
+                      && champi::kPhonesR - champi::kMasterL == champi::kHostOutputs - 1,
+                  "host channels follow CHAMPI's ports");
+    auto gain = [&](int port) { return champi::AudioLevels::Gain(port, levels.percent[port]); };
+    for(size_t i = 0; i < champi::kHostInputs; i++)
+        audio_.SetInputGain(i, gain(champi::kMic + int(i)));
+    for(size_t o = 0; o < champi::kHostOutputs; o++)
+        audio_.SetOutputGain(o, gain(champi::kMasterL + int(o)));
 }
 
 ChampiPlugin::~ChampiPlugin()
@@ -69,6 +81,7 @@ void ChampiPlugin::run(const float** inputs, float** outputs, uint32_t frames, c
                                e.size);
     }
 
+    audio_.SetPhones(champi::Runtime::Get().Panel().Phones());
     audio_.Run(inputs, outputs, frames);
 
     uint8_t bytes[256];

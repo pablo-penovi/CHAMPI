@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 
-#include "input_levels.h"
+#include "audio_levels.h"
 #include "keyboard.h"
 
 namespace champi
@@ -19,8 +19,8 @@ struct AppOptions
     Keymap                keymap = Keymap::Defaults();
     bool                  test_mode = false; // ENC6 held at power-on: TAPE's factory test
     RoutingService*       routing   = nullptr; // the connections menu's; none without JACK
-    InputLevels           input_levels;
-    std::filesystem::path input_levels_path; // where the menu saves them; empty for nowhere
+    AudioLevels           audio_levels;
+    std::filesystem::path audio_levels_path; // where the menu saves them; empty for nowhere
 };
 
 /** $XDG_CONFIG_HOME/champi, or ~/.config/champi; empty if neither is set. */

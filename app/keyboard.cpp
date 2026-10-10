@@ -75,6 +75,7 @@ std::vector<Action> AllActions()
         all.push_back({K::kKey, k});
     all.push_back({K::kToggle, 0});
     all.push_back({K::kLineIn, 0});
+    all.push_back({K::kPhones, 0});
     all.push_back({K::kUsb, 0});
     all.push_back({K::kSdCard, 0});
     for(int e = 1; e <= kNumEncoders; e++)
@@ -123,6 +124,7 @@ std::string ActionName(const Action& a)
         case K::kPush: return "push";
         case K::kToggle: return "toggle";
         case K::kLineIn: return "line_in";
+        case K::kPhones: return "phones";
         case K::kUsb: return "usb";
         case K::kSdCard: return "sd_card";
         case K::kConnections: return "connections";
@@ -158,6 +160,7 @@ Keymap Keymap::Defaults()
     m.Bind(KEY_GRAVE, {K::kToggle, 0});
     m.Bind(KEY_F9, {K::kSdCard, 0});
     m.Bind(KEY_F10, {K::kUsb, 0});
+    m.Bind(KEY_F11, {K::kPhones, 0});
     m.Bind(KEY_F12, {K::kLineIn, 0});
 
     // F1-F6 pick the encoders in the order they sit on the panel, left to right.
@@ -312,6 +315,9 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
             break;
         case K::kLineIn:
             panel_.SetLineIn(!panel_.LineIn());
+            break;
+        case K::kPhones:
+            panel_.SetPhones(!panel_.Phones());
             break;
         case K::kUsb:
             charger_.SetUsbPower(!charger_.UsbPower());

@@ -43,6 +43,11 @@ layout::Circle LineInJack()
     return {layout::kLineInJack.x, layout::kLineInJack.y, kJack};
 }
 
+layout::Circle PhonesJack()
+{
+    return {layout::kPhonesJack.x, layout::kPhonesJack.y, kJack};
+}
+
 layout::Rect UsbSocket()
 {
     return {layout::kUsbSocket.x - 4.5f, kFrontEdgeY - 1.4f, 9, 2.8f};
@@ -65,6 +70,8 @@ Hit HitTest(float x, float y)
         return {Hit::Kind::kToggle, 0};
     if(InCircle(LineInJack(), x, y))
         return {Hit::Kind::kLineIn, 0};
+    if(InCircle(PhonesJack(), x, y))
+        return {Hit::Kind::kPhones, 0};
     // Both are thin: take clicks a little round them too.
     if(InRect(UsbSocket(), x, y, 1))
         return {Hit::Kind::kUsb, 0};
@@ -142,6 +149,9 @@ bool MouseControl::Press(float x, float y, Clock::time_point now)
             return true;
         case Hit::Kind::kLineIn:
             panel_.SetLineIn(!panel_.LineIn());
+            return true;
+        case Hit::Kind::kPhones:
+            panel_.SetPhones(!panel_.Phones());
             return true;
         case Hit::Kind::kUsb:
             charger_.SetUsbPower(!charger_.UsbPower());

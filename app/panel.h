@@ -34,6 +34,7 @@ struct Hit
         kEncoder,
         kToggle,
         kLineIn,
+        kPhones,
         kUsb,    // the USB socket: power, and the battery behind it
         kSdCard, // the SD slot
     };
@@ -53,6 +54,9 @@ layout::Circle Knob(int encoder);
 
 /** The line-in jack socket, drawn at the right edge level with the real one. */
 layout::Circle LineInJack();
+
+/** The headphone jack socket, likewise. */
+layout::Circle PhonesJack();
 
 /** The USB-C socket and the SD slot, drawn just inside the front edge above the real ones. */
 layout::Rect UsbSocket();
@@ -120,7 +124,7 @@ constexpr uint32_t kBatteryStepMv = 100;
  * - Encoders turn with a vertical drag (up is clockwise) or the scroll wheel, faster than 1:1 when
  *   turned fast (see TurnGain). A click pushes one briefly; holding the button still pushes it
  *   until release, and dragging then turns it while pushed.
- * - The toggle switch and the line-in jack flip with a click.
+ * - The toggle switch, the line-in jack and the headphone jack flip with a click.
  * - A click on the USB socket plugs or unplugs USB power; the wheel over it sets the battery
  *   voltage, full at 4.2 V. A click on the SD slot pulls the card out or puts it back.
  *

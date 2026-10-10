@@ -6,7 +6,9 @@
 //
 // Host inputs are mic, line L and line R; the firmware sees them as its inputs 1, 3 and 4 (its
 // input 2 is unused). Host outputs are master L/R and phones L/R, which are the firmware's
-// outputs 3/4 and 1/2. Each host input has a gain, applied before the firmware sees it.
+// outputs 3/4 and 1/2. Each host input has a gain, applied before the firmware sees it, and each
+// host output one, applied to what the firmware plays. Only one output pair plays at a time, as
+// the headphone jack says: master without a plug in, phones with one.
 #pragma once
 
 #include <atomic>
@@ -47,6 +49,11 @@ class HostAudio
 
     /** Sets host input `input`'s gain, 1 by default. Any thread. */
     void SetInputGain(size_t input, float gain) { gains_[input].store(gain, std::memory_order_relaxed); }
+    /** Sets host output `output`'s gain, 1 by default. Any thread. */
+    void SetOutputGain(size_t output, float gain) { out_gains_[output].store(gain, std::memory_order_relaxed); }
+    /** Plays phones and silences master if `plugged`, the other way round if not (the default).
+     *  Any thread. */
+    void SetPhones(bool plugged) { phones_.store(plugged, std::memory_order_relaxed); }
 
     /** True if the host rate isn't 48 kHz. */
     bool Resampling() const { return in_src_ != nullptr; }
@@ -62,6 +69,8 @@ class HostAudio
     void RunResampled(const float* const* in, float* const* out, size_t host_frames);
     /** Points `gained` at the inputs with their gains applied, in scaled_ where a gain isn't 1. */
     void ApplyGains(const float* const* in, const float** gained, size_t frames);
+    /** Scales the outputs by their gains, and silences the pair that isn't playing, in place. */
+    void ApplyOutputGains(float* const* out, size_t frames);
     void Release();
 
     Process process_;
@@ -69,7 +78,9 @@ class HostAudio
     size_t  max_frames_ = 0;
     bool    ever_ok_    = false;
 
-    std::atomic<float> gains_[kHostInputs] = {1.f, 1.f, 1.f};
+    std::atomic<float> gains_[kHostInputs]      = {1.f, 1.f, 1.f};
+    std::atomic<float> out_gains_[kHostOutputs] = {1.f, 1.f, 1.f, 1.f};
+    std::atomic<bool>  phones_{false};
     std::vector<float> scaled_; // planar, kHostInputs of max_frames_
 
     // Rate conversion: host inputs to 48 kHz, firmware outputs back to the host rate.
