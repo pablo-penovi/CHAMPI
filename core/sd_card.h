@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string_view>
 
 namespace champi
 {
@@ -36,5 +37,9 @@ void ImportToCard(const std::filesystem::path& image, const std::filesystem::pat
 
 /** Copies everything on the card into `host_dir`, creating it if needed. */
 void ExportFromCard(const std::filesystem::path& image, const std::filesystem::path& host_dir);
+
+/** The MIDI in channel, 0-15, that TAPE's options.json sets ("Midi In Channel", from 1); 0 if it
+ *  doesn't set one, as TAPE does. */
+int MidiInChannelFromOptions(std::string_view json);
 
 } // namespace champi

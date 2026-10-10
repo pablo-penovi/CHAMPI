@@ -197,6 +197,7 @@ std::vector<ConnectionsMenu::Item> ConnectionsMenu::BuildItems(const Row& row) c
 void ConnectionsMenu::SetSnapshot(const RoutingSnapshot& snapshot)
 {
     snapshot_ = snapshot;
+    mapping_.SetGraph(snapshot.graph);
 
     // A pair connected one side at a time can't be shown as one row.
     for(int p = 0; p < kNumPairs; p++)
@@ -237,9 +238,17 @@ void ConnectionsMenu::SetSnapshot(const RoutingSnapshot& snapshot)
 
 void ConnectionsMenu::Reset()
 {
-    in_peers_ = false;
+    in_peers_   = false;
+    in_mapping_ = false;
+    mapping_.Reset();
     items_.clear();
     BuildRows();
+}
+
+void ConnectionsMenu::OpenMapping()
+{
+    in_mapping_ = true;
+    mapping_.Reset();
 }
 
 void ConnectionsMenu::SelectPortRow(int champi)
@@ -300,14 +309,35 @@ void ConnectionsMenu::EnsureVisible()
 
 void ConnectionsMenu::Move(int dx, int dy)
 {
+    if(in_mapping_)
+    {
+        if(dx)
+            mapping_.ChangeMode(dx);
+        mapping_.Move(dy);
+        return;
+    }
     if(!in_peers_)
     {
+        // The mapping row sits under both columns: down off the last row reaches it, and up
+        // from it goes back to the column it came from.
+        const int last = int(columns_[column_].size()) - 1;
+        if(mapping_selected_)
+        {
+            if(dy < 0)
+            {
+                mapping_selected_ = false;
+                row_              = std::max(0, last + 1 + dy);
+            }
+            return;
+        }
         const Row& row = columns_[column_][row_];
         if(dx && HasLevel(row))
             SetRowLevel(row, RowLevel(row) + dx * AudioLevels::kStep);
         else if(dx)
             column_ = std::clamp(column_ + dx, 0, 1);
-        row_ = std::clamp(row_ + dy, 0, int(columns_[column_].size()) - 1);
+        const int new_last = int(columns_[column_].size()) - 1;
+        mapping_selected_  = dy > 0 && row_ + dy > new_last;
+        row_               = std::clamp(row_ + dy, 0, new_last);
         return;
     }
     if(dy && item_ + dy >= 0 && item_ + dy < int(items_.size()))
@@ -325,7 +355,12 @@ void ConnectionsMenu::Move(int dx, int dy)
 
 void ConnectionsMenu::SwitchColumn()
 {
-    if(in_peers_)
+    if(in_mapping_)
+    {
+        mapping_.SwitchController();
+        return;
+    }
+    if(in_peers_ || mapping_selected_)
         return;
     column_ = 1 - column_;
     row_    = std::min(row_, int(columns_[column_].size()) - 1);
@@ -333,9 +368,15 @@ void ConnectionsMenu::SwitchColumn()
 
 void ConnectionsMenu::Page(int dir)
 {
+    if(in_mapping_)
+    {
+        mapping_.Page(dir);
+        return;
+    }
     if(!in_peers_)
     {
-        row_ = dir < 0 ? 0 : int(columns_[column_].size()) - 1;
+        mapping_selected_ = false;
+        row_              = dir < 0 ? 0 : int(columns_[column_].size()) - 1;
         return;
     }
     SelectNext(std::clamp(item_ + dir * (VisibleLines() - 1), 0, std::max(0, int(items_.size()) - 1)), dir);
@@ -343,9 +384,17 @@ void ConnectionsMenu::Page(int dir)
 
 std::vector<RouteChange> ConnectionsMenu::Activate()
 {
+    if(in_mapping_)
+    {
+        mapping_.Activate();
+        return {};
+    }
     if(!in_peers_)
     {
-        Open();
+        if(mapping_selected_)
+            OpenMapping();
+        else
+            Open();
         return {};
     }
     if(item_ >= int(items_.size()))
@@ -373,8 +422,21 @@ std::vector<RouteChange> ConnectionsMenu::Activate()
     return changes;
 }
 
+void ConnectionsMenu::Clear()
+{
+    if(in_mapping_)
+        mapping_.Clear();
+}
+
 bool ConnectionsMenu::Back()
 {
+    if(in_mapping_)
+    {
+        // Learning stops first, then the mapping closes.
+        if(!mapping_.Back())
+            in_mapping_ = false;
+        return true;
+    }
     if(!in_peers_)
         return false;
     in_peers_ = false;
@@ -384,11 +446,28 @@ bool ConnectionsMenu::Back()
 
 std::vector<RouteChange> ConnectionsMenu::Click(float x, float y)
 {
+    if(in_mapping_)
+    {
+        if(Inside(kBack, x, y))
+        {
+            mapping_.Reset();
+            in_mapping_ = false;
+        }
+        else
+            mapping_.Click(x, y);
+        return {};
+    }
     if(!in_peers_)
     {
+        if(Inside(kMappingRow, x, y))
+        {
+            mapping_selected_ = true;
+            OpenMapping();
+            return {};
+        }
         // The selected row's volume bar, and a little round it, sets the volume.
         const layout::Rect bar = LevelRect(column_, row_);
-        if(HasLevel(OpenRow()) && x >= bar.x - 1 && x < bar.x + bar.w + 1 && y >= bar.y - 2.5f
+        if(!mapping_selected_ && HasLevel(OpenRow()) && x >= bar.x - 1 && x < bar.x + bar.w + 1 && y >= bar.y - 2.5f
            && y < bar.y + bar.h + 2.5f)
         {
             const float at = std::clamp((x - bar.x) / bar.w, 0.0f, 1.0f);
@@ -399,8 +478,9 @@ std::vector<RouteChange> ConnectionsMenu::Click(float x, float y)
             for(int r = 0; r < int(columns_[c].size()); r++)
                 if(Inside(RowRect(c, r), x, y))
                 {
-                    column_ = c;
-                    row_    = r;
+                    column_           = c;
+                    row_              = r;
+                    mapping_selected_ = false;
                     Open();
                 }
         return {};
@@ -421,6 +501,11 @@ std::vector<RouteChange> ConnectionsMenu::Click(float x, float y)
 
 void ConnectionsMenu::ScrollBy(int lines)
 {
+    if(in_mapping_)
+    {
+        mapping_.ScrollBy(lines);
+        return;
+    }
     if(!in_peers_)
         return;
     scroll_ = std::clamp(scroll_ + lines, 0, std::max(0, int(items_.size()) - VisibleLines()));

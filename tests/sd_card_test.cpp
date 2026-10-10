@@ -163,3 +163,19 @@ TEST(SdCard, DefaultPathFollowsXdg)
     if(old_xdg)
         setenv("XDG_DATA_HOME", saved.c_str(), 1);
 }
+
+TEST(SdCard, ReadsTapesMidiInChannelFromItsOptions)
+{
+    const std::string factory = ReadHostFile(champi::FactoryCardDir() / "options.json");
+    EXPECT_EQ(champi::MidiInChannelFromOptions(factory), 0);
+    std::string ten = factory;
+    const size_t at = ten.find("\"Midi In Channel\",\n\t\t\t\"value\": 1");
+    ASSERT_NE(at, std::string::npos);
+    ten.replace(at + std::string("\"Midi In Channel\",\n\t\t\t\"value\": ").size(), 1, "10");
+    EXPECT_EQ(champi::MidiInChannelFromOptions(ten), 9);
+    // The out channel isn't the in channel, and nonsense is channel 1, as in TAPE.
+    EXPECT_EQ(champi::MidiInChannelFromOptions(R"({"chompi":[{"name":"Midi Out Channel","value":5}]})"), 0);
+    EXPECT_EQ(champi::MidiInChannelFromOptions(R"([{"name": "Midi In Channel", "value": 17}])"), 0);
+    EXPECT_EQ(champi::MidiInChannelFromOptions(R"([{"name": "Midi In Channel", "value": 16}])"), 15);
+    EXPECT_EQ(champi::MidiInChannelFromOptions(""), 0);
+}

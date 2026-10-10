@@ -62,7 +62,8 @@ Tick a chunk's box when its PR is merged into `main`.
 | ☑ | 7 | Computer keyboard control with a configurable keymap | It plays fully without the mouse |
 | ☑ | 8 | Polish: shift menus, looper and recording, test mode, removing the SD card, encoder feel, README | Everything in the detailed plan's milestone 5 is covered |
 | ☑ | 9 | Connections menu: route CHAMPI's audio and MIDI ports to other JACK/PipeWire ports from an F8 overlay, saved and restored | Every port can be routed from the menu without qpwgraph, and the routing comes back on the next start |
-| ☐ | 10 | Later: TEMPO and WAVE [daisycola 6] | |
+| ☐ | 10 | MIDI controller mapping: map a controller's knobs, keys and pads to the panel from the F8 menu, learnt by touch and remembered per controller | Every panel control can be mapped from the menu, and the mapping comes back when that controller is connected again |
+| ☐ | 11 | Later: TEMPO and WAVE [daisycola 6] | |
 
 Both original big risks are settled in daisycola: the fork turned out manageable (chunk 1), and the
 signal-based interrupts work under both sanitizers (chunk 4). The biggest risk now is chunk 5:
@@ -516,7 +517,65 @@ and every hardware MIDI source to `events-in`, once, at start; the inputs, phone
   - Still manual: pressing F8 and clicking through the menu by hand, and whether WirePlumber
     fights it.
 
-### 10. Later: TEMPO and WAVE
+### 10. MIDI controller mapping
+TAPE's own MIDI is fixed: notes from C1 on its MIDI in channel play the keys, CC20-25 set the
+knobs and CC26/27 work play and loop. Nothing reaches the knob presses, the CHOMPI key or the
+toggle, and a controller has to be reprogrammed to fit. This maps any controller onto the panel
+instead.
+
+- **The mapping** (`app/midi_map.{h,cpp}`, in `champi_panel`, no DPF):
+  - 41 targets, in the menu's order: each knob's rotation and press, the CHOMPI, play and loop
+    keys, the toggle, KEY1-25. Knobs are numbered left to right as they sit on the panel (ENC4,
+    ENC1, ENC2, ENC3, ENC5, ENC6), not by the board's ENCn, and the CHOMPI key is listed as the
+    CHAMPI button. A binding is a note or a CC on a channel; a rotation's is a CC with
+    a knob mode (absolute, or relative as 64 ± n, two's complement or sign bit).
+  - A mapping per controller in `~/.config/champi/midi-mappings/<controller>.toml`, the same TOML
+    subset as the other files, with a `controller = "..."` line naming the port. Errors give the
+    line.
+  - Every controller arrives merged on `events-in`, so a message can't be told apart by sender. A
+    mapping belongs to the port connected to MIDI in, found by name or through `Resolve` (the
+    PipeWire `-<number>` suffix). The mappings of every connected controller apply together; where
+    two map one target or one message, the first port's wins.
+- **Playing** (`MidiMapper`, owned by the plugin, on the audio thread):
+  - A 2×16×128 table of atomics, from message to target, that the UI rewrites. No locks or
+    allocation in `Process`.
+  - Keys, buttons and pushes are held from note-on to note-off, or while a CC is 64 or above; the
+    toggle flips on each press. These go straight to `PanelState`, whose calls are atomics in
+    daisycola.
+  - A relative rotation queues detents through `QueueTurn`, with the mouse's `TurnRate`
+    acceleration. An absolute one becomes TAPE's own CC for the knob (ENC4, ENC1, ENC2, ENC3,
+    ENC5, ENC6 are CC20-25, from `encoder_map` in TAPE's `ui.h`) on TAPE's MIDI in channel, which
+    the runtime reads from `options.json` on the card before the firmware starts. TAPE treats a
+    CC as a knob position rather than a step, which detents can't match: the start and end knobs
+    take 333 detents end to end, and the board only plays about 80 a second.
+  - Unmapped messages go to the firmware as before.
+- **Learning**: while a row learns, `Process` keeps notes and CCs in a small ring for the UI
+  instead of playing them; releases still let go. A press is its first note-on or CC. A rotation
+  takes six CCs of one controller: an encoder repeats its step or two, a knob's values move.
+  Values round 64 mean 64 ± n, a step back near 127 two's complement, just over 64 the sign bit.
+  Left/Right overrides the guess.
+- **The menu** (`app/midi_map_menu.{h,cpp}`, owned by `ConnectionsMenu`): a row under both
+  columns opens a table of the 41 targets and what the shown controller maps to each. Up/Down,
+  Page Up/Down and the wheel move and scroll; Enter or a click learns; Delete unmaps; Left/Right
+  sets a rotation's mode; Tab picks the controller when there are several; Esc stops learning,
+  then goes back. The window saves each changed controller's file and hands the active mapping to
+  the plugin on every change and every routing snapshot.
+- **Done when:** every panel control can be mapped from the menu by touching the controller's, it
+  plays as mapped, and the mapping comes back when the same controller is connected again.
+- How it went:
+  - 23 new tests: `champi-midi-map-tests` (targets, the file format and its errors, saving and
+    loading, resolving controllers, merging, learning and the mode guess, the table's keys, and
+    every kind of message played into a real `PanelState`), the mapping row in
+    `champi-routing-tests`, and reading `options.json` in `champi-tests`. 146 pass.
+  - Checked in the app under PipeWire with a scratch build that took menu keys from a file, and
+    MIDI sent through ALSA's Midi Through port with `aseqsend`: learning a relative encoder, a
+    note on channel 10 and a CC button; the saved file; and the pad holding play, the CC flipping
+    the toggle and the encoder turning knob 1. Screenshots taken with niri. That run caught
+    NanoVG asserting on an empty hint string.
+  - Absolute knobs couldn't be checked by eye: TAPE's knob LEDs show the page, not the value.
+  - Still manual: a real controller's knobs and pads, by hand.
+
+### 11. Later: TEMPO and WAVE
 - daisycola phase 6: TIM16 MIDI clock, `MidiManager` DMA transmit, `f_opendir`/`readdir`.
 - Their card profiles and the libDaisy fork headers for each.
 - Probably one chunk per firmware.

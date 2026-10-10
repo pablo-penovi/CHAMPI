@@ -19,6 +19,7 @@ ChampiPlugin::ChampiPlugin() : Plugin(0, 0, 0), audio_(daisycola::ProcessAudio)
         // In test mode ENC6 starts pushed; the UI lets go of it once the firmware has booted.
         champi::Runtime::Get().Start(champi::Options().sd_image, daisycola::AudioClock::kHost,
                                      champi::Options().test_mode);
+        midi_map_.SetFirmwareChannel(champi::Runtime::Get().MidiInChannel());
     }
     catch(const std::exception& e)
     {
@@ -73,12 +74,24 @@ void ChampiPlugin::activate()
 void ChampiPlugin::run(const float** inputs, float** outputs, uint32_t frames, const MidiEvent* midi,
                        uint32_t midi_count)
 {
-    // Every connected controller arrives merged on one JACK port, and goes to the TRS jack.
+    // Every connected controller arrives merged on one JACK port. What the mapping maps works the
+    // panel, or becomes TAPE's own CC for a knob; the rest goes to the TRS jack as it is.
+    champi::PanelState& panel = champi::Runtime::Get().Panel();
     for(uint32_t i = 0; i < midi_count; i++)
     {
-        const MidiEvent& e = midi[i];
-        daisycola::WriteMidiIn(daisycola::MidiPort::kUart, e.size > MidiEvent::kDataSize ? e.dataExt : e.data,
-                               e.size);
+        const MidiEvent& e    = midi[i];
+        const uint8_t*   data = e.size > MidiEvent::kDataSize ? e.dataExt : e.data;
+        uint8_t          out[3];
+        switch(midi_map_.Process(data, e.size, panel, out))
+        {
+            case champi::MidiMapper::Result::kPass:
+                daisycola::WriteMidiIn(daisycola::MidiPort::kUart, data, e.size);
+                break;
+            case champi::MidiMapper::Result::kFirmware:
+                daisycola::WriteMidiIn(daisycola::MidiPort::kUart, out, sizeof out);
+                break;
+            case champi::MidiMapper::Result::kConsumed: break;
+        }
     }
 
     audio_.SetPhones(champi::Runtime::Get().Panel().Phones());

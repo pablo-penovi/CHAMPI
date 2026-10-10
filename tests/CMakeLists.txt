@@ -59,6 +59,12 @@ add_executable(champi-routing-tests routing_test.cpp)
 target_link_libraries(champi-routing-tests PRIVATE champi_panel champi_routing champi_warnings GTest::gtest_main)
 gtest_discover_tests(champi-routing-tests DISCOVERY_MODE PRE_TEST)
 
+# The MIDI controller mapping: mapping files, learning, the menu's table, and mapped messages into
+# a PanelState of its own.
+add_executable(champi-midi-map-tests midi_map_test.cpp)
+target_link_libraries(champi-midi-map-tests PRIVATE champi_panel champi_warnings GTest::gtest_main)
+gtest_discover_tests(champi-midi-map-tests DISCOVERY_MODE PRE_TEST)
+
 # app/panel_layout.h must be what the extractor makes from the board files.
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)

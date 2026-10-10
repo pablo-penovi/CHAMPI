@@ -7,6 +7,7 @@
 
 #include "audio_levels.h"
 #include "keyboard.h"
+#include "midi_map.h"
 
 namespace champi
 {
@@ -21,6 +22,8 @@ struct AppOptions
     RoutingService*       routing   = nullptr; // the connections menu's; none without JACK
     AudioLevels           audio_levels;
     std::filesystem::path audio_levels_path; // where the menu saves them; empty for nowhere
+    MidiMappings          midi_mappings;
+    std::filesystem::path midi_mappings_dir; // where the menu saves them; empty for nowhere
 };
 
 /** $XDG_CONFIG_HOME/champi, or ~/.config/champi; empty if neither is set. */

@@ -1,5 +1,6 @@
 #include "sd_card.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -97,6 +98,22 @@ void ExportFromCard(const fs::path& image, const fs::path& host_dir)
 {
     OpenCard card(image);
     daisycola::SdCopyOut("/", host_dir.string());
+}
+
+int MidiInChannelFromOptions(std::string_view json)
+{
+    // Each option is {"name": "...", "value": ...}: the first value after the name is its own.
+    size_t at = json.find("\"Midi In Channel\"");
+    if(at == std::string_view::npos || (at = json.find("\"value\"", at)) == std::string_view::npos
+       || (at = json.find(':', at)) == std::string_view::npos)
+        return 0;
+    at++;
+    while(at < json.size() && std::isspace((unsigned char)json[at]))
+        at++;
+    int channel = 0;
+    for(int digits = 0; at < json.size() && std::isdigit((unsigned char)json[at]) && digits < 3; at++, digits++)
+        channel = channel * 10 + (json[at] - '0');
+    return channel >= 1 && channel <= 16 ? channel - 1 : 0;
 }
 
 } // namespace champi

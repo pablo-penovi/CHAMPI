@@ -4,6 +4,9 @@
 #include <chrono>
 #include <stdexcept>
 #include <thread>
+#include <vector>
+
+#include "sd_card.h"
 
 int chompi_fw_main();
 
@@ -46,6 +49,15 @@ void Runtime::Start(const std::filesystem::path& sd_image, daisycola::AudioClock
     started_ = true;
 
     daisycola::SdOpenImage(sd_image.string());
+    try
+    {
+        const std::vector<uint8_t> options = daisycola::SdReadFile("/options.json");
+        midi_in_channel_ = MidiInChannelFromOptions(std::string_view((const char*)options.data(), options.size()));
+    }
+    catch(const std::exception&)
+    {
+        midi_in_channel_ = 0; // no options.json: TAPE writes one with channel 1
+    }
     card_.SetInserted(true);
     panel_.Attach();
     charger_.Attach();

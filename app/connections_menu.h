@@ -9,6 +9,9 @@
 // The selected audio row also shows its volume, as a bar the left and right arrows or a click
 // move; the MIDI rows switch columns with them. Tab always switches.
 //
+// Under both columns, one row opens the MIDI controller mapping (MidiMappingMenu), which then
+// takes the keys and the mouse until it goes back.
+//
 // Everything is in panel millimetres, like the panel it's drawn over.
 #pragma once
 
@@ -18,6 +21,7 @@
 #include <vector>
 
 #include "audio_levels.h"
+#include "midi_map_menu.h"
 #include "panel_layout.h"
 #include "routing.h"
 
@@ -77,6 +81,10 @@ class ConnectionsMenu
     static constexpr float        kLineHeight = 6;
     static constexpr layout::Rect kBack{kBox.x + kPad, kSubtitleY - 3, 16, 6};
     static constexpr layout::Rect kList{kBox.x + kPad, kBodyY, kBox.w - 2 * kPad, kBox.y + kBox.h - kPad - kBodyY};
+    // The MIDI controller mapping's row, under three rows of each column, and its heading.
+    static constexpr layout::Rect kMappingRow{kBox.x + kPad, kBodyY + 3 * (kRowHeight + kRowGap) + 7,
+                                              kBox.w - 2 * kPad, kRowHeight};
+    static constexpr float        kMappingTitleY = kMappingRow.y - 3.5f;
 
     ConnectionsMenu() { BuildRows(); }
 
@@ -86,6 +94,12 @@ class ConnectionsMenu
     void Reset();
 
     bool InPeers() const { return in_peers_; }
+    /** Whether the MIDI controller mapping is open, or its row selected on the first level. */
+    bool InMapping() const { return in_mapping_; }
+    bool MappingSelected() const { return mapping_selected_; }
+
+    MidiMappingMenu&       Mapping() { return mapping_; }
+    const MidiMappingMenu& Mapping() const { return mapping_; }
 
     /** The first level. Column 0 is the inputs, 1 the outputs. */
     const std::vector<Row>& Column(int column) const { return columns_[column]; }
@@ -103,7 +117,8 @@ class ConnectionsMenu
     void               SetLevels(const AudioLevels& levels) { levels_ = levels; }
     const AudioLevels& Levels() const { return levels_; }
 
-    /** The second level: the row that's open and its lines. */
+    /** The second level: the row that's open and its lines. While the mapping row is selected,
+     *  the row selected in the column above it. */
     const Row&               OpenRow() const { return columns_[column_][row_]; }
     const std::vector<Item>& Items() const { return items_; }
     int                      SelectedItem() const { return item_; }
@@ -117,6 +132,7 @@ class ConnectionsMenu
     void                     SwitchColumn();       // Tab
     void                     Page(int dir);        // page up and down
     std::vector<RouteChange> Activate();           // Enter or Space: open a row, or tick
+    void                     Clear();              // Delete: unmaps a control in the mapping
     /** Esc: back a level. False if it was on the first level already, so the menu closes. */
     bool Back();
 
@@ -132,6 +148,7 @@ class ConnectionsMenu
     void              EnsureVisible();
     void              SelectPortRow(int champi);
     void              SetRowLevel(const Row& row, int percent);
+    void              OpenMapping();
 
     RoutingSnapshot                  snapshot_;
     std::array<bool, kNumPairs>      split_{};
@@ -143,6 +160,9 @@ class ConnectionsMenu
     int                              item_   = 0;
     int                              scroll_ = 0;
     AudioLevels                      levels_;
+    bool                             mapping_selected_ = false;
+    bool                             in_mapping_       = false;
+    MidiMappingMenu                  mapping_;
 };
 
 } // namespace champi

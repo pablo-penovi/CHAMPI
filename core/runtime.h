@@ -38,6 +38,10 @@ class Runtime
      *  image. Returns false if it didn't stop within the timeout. */
     bool Stop(uint32_t timeout_ms = 3000);
 
+    /** TAPE's MIDI in channel, 0-15, read from the card's options.json at Start. TAPE reads it
+     *  at boot too, so it holds until the next start. */
+    int MidiInChannel() const { return midi_in_channel_; }
+
     PanelState& Panel() { return panel_; }
     Mp2722&     Charger() { return charger_; }
     CardSlot&   Card() { return card_; }
@@ -48,6 +52,7 @@ class Runtime
     PanelState panel_;
     Mp2722     charger_;
     CardSlot   card_;
+    int        midi_in_channel_ = 0;
     bool       started_ = false;
     bool       stopped_ = false;
 };
