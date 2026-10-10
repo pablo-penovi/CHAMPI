@@ -561,3 +561,20 @@ TEST(Headless, PullingTheCardFallsBackToTheBuiltInSample)
                 kC4 * 0.005)
         << "still the built-in sample";
 }
+
+TEST(Headless, TheFirstPressOfEachCubbiVoicePlays)
+{
+    // A cubbi voice sets its play window before its file has opened, while TAPE still sees a file
+    // size of 0. On the chip that arithmetic saturates and the window is accepted; daisycola's
+    // ff.h makes the host do the same. Without it each voice's first press was silent.
+    TempDir      dir;
+    const Result run = RunHeadless(dir, dir / "card.img",
+                                   std::string(kBoot) + ShiftMenu({17}, false)
+                                       + "wait 1s\n"
+                                         "key 8 down\nwait 1s\nkey 8 up\nwait 500ms\n"
+                                         "key 9 down\nwait 1s\nkey 9 up\nwait 500ms\n");
+    ASSERT_EQ(run.exit_code, 0);
+
+    EXPECT_GT(run.Rms(run.FrameOf("key 8 down") + 12000, 24000), 5e-3) << "KEY8's first press";
+    EXPECT_GT(run.Rms(run.FrameOf("key 9 down") + 12000, 24000), 5e-3) << "KEY9's first press";
+}
