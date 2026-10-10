@@ -40,6 +40,7 @@ struct Action
         kPush,          // pushes the selected encoder while held
         kToggle,        // flips the toggle switch
         kLineIn,        // plugs or unplugs the line-in jack
+        kPhones,        // plugs or unplugs the headphone jack
         kUsb,           // plugs or unplugs USB power
         kSdCard,        // pulls the SD card out or puts it back
         kConnections,   // opens and closes the connections menu (the window handles it)
@@ -104,7 +105,7 @@ class Keymap
  *   turning it every kRepeatEvery while held (the window's own key repeat should be off), by more
  *   each time the longer they're held. The push key holds it pushed; it stays on the encoder it
  *   pushed even if another is selected meanwhile.
- * - The toggle, line-in, USB and SD-card keys flip on a press.
+ * - The toggle, line-in, headphone, USB and SD-card keys flip on a press.
  *
  * Times come from the caller, so it can be driven without a clock.
  */

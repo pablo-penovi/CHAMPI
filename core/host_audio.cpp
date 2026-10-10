@@ -116,6 +116,7 @@ void HostAudio::Run(const float* const* in, float* const* out, size_t frames)
         else if(ever_ok_)
             late_.fetch_add(1, std::memory_order_relaxed);
     }
+    ApplyOutputGains(out, frames);
 
     const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     const float  load  = float(spent * host_rate_ / double(std::max<size_t>(frames, 1)));
@@ -139,6 +140,24 @@ void HostAudio::ApplyGains(const float* const* in, const float** gained, size_t 
         for(size_t i = 0; i < frames; i++)
             scaled[i] = in[c][i] * gain;
         gained[c] = scaled;
+    }
+}
+
+void HostAudio::ApplyOutputGains(float* const* out, size_t frames)
+{
+    // Master is outputs 0 and 1, phones 2 and 3.
+    const bool phones = phones_.load(std::memory_order_relaxed);
+    for(size_t c = 0; c < kHostOutputs; c++)
+    {
+        const bool  playing = (c >= 2) == phones;
+        const float gain    = playing ? out_gains_[c].load(std::memory_order_relaxed) : 0.f;
+        if(!out[c] || gain == 1.f)
+            continue;
+        if(gain == 0.f)
+            std::fill(out[c], out[c] + frames, 0.f);
+        else
+            for(size_t i = 0; i < frames; i++)
+                out[c][i] *= gain;
     }
 }
 

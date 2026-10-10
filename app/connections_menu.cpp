@@ -42,8 +42,7 @@ layout::Rect ConnectionsMenu::RowRect(int column, int row)
 
 bool ConnectionsMenu::HasLevel(const Row& row)
 {
-    const ChampiPort& port = kChampiPorts[row.ports[0]];
-    return port.input && port.type == PortType::kAudio;
+    return AudioLevels::Has(row.ports[0]);
 }
 
 layout::Rect ConnectionsMenu::LevelRect(int column, int row)
@@ -55,7 +54,7 @@ layout::Rect ConnectionsMenu::LevelRect(int column, int row)
 void ConnectionsMenu::SetRowLevel(const Row& row, int percent)
 {
     for(int port : row.ports)
-        levels_.percent[port] = std::clamp(percent, 0, InputLevels::kMax);
+        levels_.percent[port] = std::clamp(percent, 0, AudioLevels::kMax);
 }
 
 layout::Rect ConnectionsMenu::ItemRect(int item) const
@@ -305,7 +304,7 @@ void ConnectionsMenu::Move(int dx, int dy)
     {
         const Row& row = columns_[column_][row_];
         if(dx && HasLevel(row))
-            SetRowLevel(row, RowLevel(row) + dx * InputLevels::kStep);
+            SetRowLevel(row, RowLevel(row) + dx * AudioLevels::kStep);
         else if(dx)
             column_ = std::clamp(column_ + dx, 0, 1);
         row_ = std::clamp(row_ + dy, 0, int(columns_[column_].size()) - 1);
@@ -393,7 +392,7 @@ std::vector<RouteChange> ConnectionsMenu::Click(float x, float y)
            && y < bar.y + bar.h + 2.5f)
         {
             const float at = std::clamp((x - bar.x) / bar.w, 0.0f, 1.0f);
-            SetRowLevel(OpenRow(), int(at * InputLevels::kMax + 0.5f));
+            SetRowLevel(OpenRow(), int(at * AudioLevels::kMax + 0.5f));
             return {};
         }
         for(int c = 0; c < 2; c++)

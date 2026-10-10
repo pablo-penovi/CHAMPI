@@ -122,7 +122,7 @@ TEST(PanelHitTest, EdgesAndGaps)
     EXPECT_EQ(HitTest(e1.x, e1.y - champi::kKnobRing / 2 - 0.5f).kind, Kind::kNone);
     EXPECT_EQ(HitTest(layout::kEncoder[4].x + 15, layout::kEncoder[4].y), EncoderHit(5));
     EXPECT_EQ(HitTest(0.5f, 0.5f).kind, Kind::kNone);
-    EXPECT_EQ(HitTest(layout::kPhonesJack.x, layout::kPhonesJack.y).kind, Kind::kNone);
+    EXPECT_EQ(HitTest(layout::kPhonesJack.x, layout::kPhonesJack.y).kind, Kind::kPhones);
 }
 
 TEST(PanelLeds, UndoTheFirmwareScalingAndGammaEncode)
@@ -168,6 +168,7 @@ class PanelMouse : public ::testing::Test
         }
         panel_.SetToggle(true);
         panel_.SetLineIn(false);
+        panel_.SetPhones(false);
         card_.SetInserted(true);
     }
 
@@ -346,7 +347,7 @@ TEST_F(PanelMouse, TheWheelTurnsWhatItsOver)
     EXPECT_FALSE(mouse_->Scroll(layout::kKey[0].x, layout::kKey[0].y, 1, next()));
 }
 
-TEST_F(PanelMouse, TheToggleAndTheJackFlipOnAClick)
+TEST_F(PanelMouse, TheToggleAndTheJacksFlipOnAClick)
 {
     const layout::Rect& t = layout::kToggleSlot;
     ASSERT_TRUE(panel_.Toggle());
@@ -363,6 +364,14 @@ TEST_F(PanelMouse, TheToggleAndTheJackFlipOnAClick)
     mouse_->Release(At(50));
     mouse_->Press(layout::kLineInJack.x, layout::kLineInJack.y, At(60));
     EXPECT_FALSE(panel_.LineIn());
+    mouse_->Release(At(70));
+
+    ASSERT_FALSE(panel_.Phones());
+    mouse_->Press(layout::kPhonesJack.x, layout::kPhonesJack.y, At(80));
+    EXPECT_TRUE(panel_.Phones());
+    mouse_->Release(At(90));
+    mouse_->Press(layout::kPhonesJack.x, layout::kPhonesJack.y, At(100));
+    EXPECT_FALSE(panel_.Phones());
 }
 
 TEST_F(PanelMouse, UsbPlugsTheSdCardPullsAndTheWheelSetsTheBattery)

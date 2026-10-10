@@ -1,12 +1,16 @@
 // The CHOMPI front panel as the firmware sees it: keys, encoders, the toggle switch and the line-in
-// jack, wired to daisycola's shift registers, encoders and pins as on the main board.
+// jack, wired to daisycola's shift registers, encoders and pins as on the main board. And the
+// headphone jack, which the firmware doesn't see: the host plays master or phones by it.
 //
 // Keys and encoders are numbered as printed on the board: KEY1-KEY28 and ENC1-ENC6. KEY1-15 are
 // the white row, KEY16-25 the black row, KEY26 the CHOMPI key, KEY27 play and KEY28 loop.
 //
 // Attach wires everything once per process, before the firmware starts. The other calls may be
-// made from any host thread; the levels live in daisycola, so there is no state to keep in sync.
+// made from any host thread; the levels live in daisycola, so there is no state to keep in sync,
+// bar the headphone jack's.
 #pragma once
+
+#include <atomic>
 
 namespace champi
 {
@@ -21,7 +25,7 @@ class PanelState
 {
   public:
     /** Wires the panel to daisycola with every key and push released, the toggle on and no
-     *  line-in plug. Once per process, before the firmware starts. */
+     *  line-in or headphone plug. Once per process, before the firmware starts. */
     void Attach();
 
     /** Presses or releases KEYn (1 to 28). */
@@ -48,10 +52,16 @@ class PanelState
     void SetLineIn(bool plugged);
     bool LineIn() const;
 
+    /** The headphone jack: with a plug in, the host plays the phones outputs and silences master;
+     *  without one, the other way round. */
+    void SetPhones(bool plugged) { phones_.store(plugged, std::memory_order_relaxed); }
+    bool Phones() const { return phones_.load(std::memory_order_relaxed); }
+
   private:
     int button_chain_  = -1; // five CD4021s: keys, toggle and the pushes of ENC1-4 and ENC6
     int encoder_chain_ = -1; // one CD4021: A and B of ENC1-4
     int encoders_[kNumEncoders] = {};
+    std::atomic<bool> phones_{false};
 };
 
 } // namespace champi

@@ -3,9 +3,9 @@
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
 
-# Where CHAMPI's ports are connected, connections.toml and input_levels.toml: no JACK, so the
+# Where CHAMPI's ports are connected, connections.toml and audio_levels.toml: no JACK, so the
 # tests can use it.
-add_library(champi_routing STATIC routing.cpp toml_lines.cpp input_levels.cpp)
+add_library(champi_routing STATIC routing.cpp toml_lines.cpp audio_levels.cpp)
 target_include_directories(champi_routing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_routing PRIVATE champi_warnings)
 

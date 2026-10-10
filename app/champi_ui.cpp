@@ -114,7 +114,7 @@ class ChampiUI : public UI
         // X11 repeats a held key as a release and a press, which would retrigger it. KeyboardControl
         // repeats the turn keys itself.
         getWindow().setIgnoringKeyRepeat(true);
-        menu_.SetLevels(champi::Options().input_levels);
+        menu_.SetLevels(champi::Options().audio_levels);
     }
 
   protected:
@@ -332,16 +332,15 @@ class ChampiUI : public UI
         }
     }
 
-    // Sets the gains of inputs whose volume the menu changed, and saves them.
+    // Sets the gains of ports whose volume the menu changed, and saves them.
     void ApplyLevels()
     {
-        champi::InputLevels& levels = champi::Options().input_levels;
+        champi::AudioLevels& levels = champi::Options().audio_levels;
         if(menu_.Levels() == levels)
             return;
         levels = menu_.Levels();
-        for(int i = 0; i < champi::InputLevels::kInputs; i++)
-            Plugin().SetInputGain(size_t(i), champi::InputLevels::Gain(levels.percent[i]));
-        const auto& path = champi::Options().input_levels_path;
+        Plugin().SetLevels(levels);
+        const auto& path = champi::Options().audio_levels_path;
         if(path.empty())
             return;
         try
@@ -350,7 +349,7 @@ class ChampiUI : public UI
         }
         catch(const std::exception& e)
         {
-            std::fprintf(stderr, "champi: can't save the input volumes: %s\n", e.what());
+            std::fprintf(stderr, "champi: can't save the volumes: %s\n", e.what());
         }
     }
 
@@ -1149,10 +1148,10 @@ class ChampiUI : public UI
     }
 
     // The line-in and headphone jacks are on the side; they're drawn at the right edge, level with
-    // the real ones. Clicking line in plugs or unplugs a cable.
+    // the real ones. Clicking either plugs or unplugs a cable.
     void DrawJacks()
     {
-        const bool plugged = champi::Runtime::Get().Panel().LineIn();
+        const champi::PanelState& panel = champi::Runtime::Get().Panel();
         auto       socket  = [&](const layout::Point& p, const char* label, bool plug) {
             Circle(p.x, p.y, champi::kJack, Color(150, 150, 150));
             Circle(p.x, p.y, champi::kJack - 1.2f, Color(4, 4, 4));
@@ -1173,8 +1172,8 @@ class ChampiUI : public UI
             fillColor(kCream);
             text(p.x, p.y + champi::kJack / 2 + 1, label, nullptr);
         };
-        socket(layout::kLineInJack, plugged ? "LINE" : "MIC", plugged);
-        socket(layout::kPhonesJack, "PHONES", false);
+        socket(layout::kLineInJack, panel.LineIn() ? "LINE" : "MIC", panel.LineIn());
+        socket(layout::kPhonesJack, panel.Phones() ? "PHONES" : "MASTER", panel.Phones());
     }
 
     // The USB socket and the SD slot face the player. They're drawn just inside the front edge,
@@ -1377,7 +1376,7 @@ class ChampiUI : public UI
         if(percent > 0)
         {
             beginPath();
-            roundedRect(bar.x, bar.y, bar.w * percent / champi::InputLevels::kMax, bar.h, bar.h / 2);
+            roundedRect(bar.x, bar.y, bar.w * percent / champi::AudioLevels::kMax, bar.h, bar.h / 2);
             fillColor(kGold);
             fill();
         }

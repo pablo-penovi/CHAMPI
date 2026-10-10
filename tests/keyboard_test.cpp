@@ -71,6 +71,7 @@ TEST(KeyNames, ActionsRoundTrip)
     EXPECT_EQ(champi::ActionName(Select(4)), "encoder_4");
     EXPECT_EQ(champi::ActionFromName("key_25"), Key(25));
     EXPECT_EQ(champi::ActionFromName("line_in"), (Action{Kind::kLineIn, 0}));
+    EXPECT_EQ(champi::ActionFromName("phones"), (Action{Kind::kPhones, 0}));
     EXPECT_EQ(champi::ActionFromName("connections"), (Action{Kind::kConnections, 0}));
     EXPECT_FALSE(champi::ActionFromName("key_26")); // that's "chompi"
     EXPECT_FALSE(champi::ActionFromName("encoder_7"));
@@ -101,6 +102,7 @@ TEST(DefaultKeymap, TrackerStyleTwoOctaves)
     EXPECT_EQ(m.Lookup(KEY_ENTER), Key(champi::kLoopKey));
     EXPECT_EQ(m.Lookup(KEY_GRAVE), (Action{Kind::kToggle, 0}));
     EXPECT_EQ(m.Lookup(KEY_F12), (Action{Kind::kLineIn, 0}));
+    EXPECT_EQ(m.Lookup(KEY_F11), (Action{Kind::kPhones, 0}));
     EXPECT_EQ(m.Lookup(KEY_F9), (Action{Kind::kSdCard, 0}));
     EXPECT_EQ(m.Lookup(KEY_F10), (Action{Kind::kUsb, 0}));
     EXPECT_EQ(m.Lookup(KEY_BACKSLASH), (Action{Kind::kPush, 0}));
@@ -133,8 +135,8 @@ TEST(DefaultKeymap, EveryActionHasAKey)
         EXPECT_FALSE(m.KeysFor(Key(k)).empty()) << "KEY" << k;
     for(int e = 1; e <= champi::kNumEncoders; e++)
         EXPECT_FALSE(m.KeysFor(Select(e)).empty()) << "ENC" << e;
-    for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn, Kind::kUsb,
-                     Kind::kSdCard, Kind::kConnections})
+    for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn, Kind::kPhones,
+                     Kind::kUsb, Kind::kSdCard, Kind::kConnections})
         EXPECT_FALSE(m.KeysFor({kind, 0}).empty()) << champi::ActionName({kind, 0});
 }
 
@@ -230,6 +232,7 @@ class PanelKeyboard : public ::testing::Test
         }
         panel_.SetToggle(true);
         panel_.SetLineIn(false);
+        panel_.SetPhones(false);
         charger_.SetUsbPower(true);
         card_.SetInserted(true);
     }
@@ -397,7 +400,7 @@ TEST_F(PanelKeyboard, PushHoldsTheEncoderItPushed)
     EXPECT_FALSE(panel_.EncoderPushed(1));
 }
 
-TEST_F(PanelKeyboard, ToggleAndLineInFlipOnAPress)
+TEST_F(PanelKeyboard, ToggleAndTheJacksFlipOnAPress)
 {
     ASSERT_TRUE(panel_.Toggle());
     keys_->Press(KEY_GRAVE, At(0));
@@ -415,6 +418,14 @@ TEST_F(PanelKeyboard, ToggleAndLineInFlipOnAPress)
     keys_->Release(KEY_F12);
     keys_->Press(KEY_F12, At(400));
     EXPECT_FALSE(panel_.LineIn());
+    keys_->Release(KEY_F12);
+
+    ASSERT_FALSE(panel_.Phones());
+    keys_->Press(KEY_F11, At(500));
+    EXPECT_TRUE(panel_.Phones());
+    keys_->Release(KEY_F11);
+    keys_->Press(KEY_F11, At(600));
+    EXPECT_FALSE(panel_.Phones());
 }
 
 TEST_F(PanelKeyboard, UsbAndTheSdCardFlipOnAPress)
