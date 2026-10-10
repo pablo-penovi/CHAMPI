@@ -101,7 +101,15 @@ hardware MIDI source to its MIDI input. `F8` opens the [connections menu](#conne
 connects any of its ports and remembers them for the next start.
 
 The firmware runs at 48 kHz. At other rates the audio is resampled with libsamplerate, which adds a
-little latency, so it's better to run the graph at 48 kHz. For a 64-frame buffer:
+little latency, so it's better to run the graph at 48 kHz.
+
+Under PipeWire, `champi` asks for a 128-frame buffer (`PIPEWIRE_LATENCY=128/48000`) unless
+`PIPEWIRE_LATENCY` is already set. A short buffer matters for more than latency. TAPE reads its
+keys once per audio block and debounces them over 8 ms, but each buffer's blocks run back to back
+and the firmware then waits for the next buffer. With PipeWire's usual 1024 frames, a key takes
+100 ms or more to register. A tap shorter than that still plays, because CHAMPI holds each key
+change until TAPE has read it in enough different milliseconds, but late. A JACK server keeps its
+own buffer size. For a 64-frame buffer:
 
 ```sh
 PIPEWIRE_QUANTUM=64/48000 build/bin/champi

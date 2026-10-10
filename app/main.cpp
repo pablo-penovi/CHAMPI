@@ -164,6 +164,12 @@ int main(int argc, char** argv)
         dpf_argv.push_back(arg.data());
     dpf_argv.push_back(nullptr);
 
+    // TAPE reads its keys once per audio block and debounces them by the millisecond, but a host
+    // period's blocks run back to back. At PipeWire's usual 1024 frames a key has to be held for
+    // 100 ms or more before TAPE sees it. Ask for a short period, unless the user picked one; a
+    // JACK server keeps its own.
+    setenv("PIPEWIRE_LATENCY", "128/48000", 0);
+
     JackMonitor monitor;
     if(monitor.Open(DISTRHO_PLUGIN_NAME, connect, connections, std::move(saved)))
         Options().routing = &monitor;

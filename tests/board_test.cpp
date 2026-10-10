@@ -145,6 +145,30 @@ TEST_F(Board, KeysGiveTheFirmwaresEdges)
     EXPECT_GE(scans_until([] { return hw.button_sr.FallingEdge(int(SwId::KEY_27)); }), 0);
 }
 
+TEST_F(Board, ATapBetweenTwoBurstsStillGivesBothEdges)
+{
+    // Under JACK at 1024 frames, TAPE scans 42 times back to back every 21.3 ms, and its debounce
+    // counts one scan a millisecond. A tap that comes and goes between two bursts still lands.
+    panel.SetKey(8, true);
+    panel.SetKey(8, false);
+    EXPECT_FALSE(panel.KeyPressed(8));
+    int rises = 0, falls = 0;
+    for(int period = 0; period < 40; period++)
+    {
+        for(int block = 0; block < 42; block++)
+        {
+            hw.ProcessAllControls();
+            rises += hw.button_sr.RisingEdge(int(SwId::KEY_8));
+            falls += hw.button_sr.FallingEdge(int(SwId::KEY_8));
+            daisycola::AdvanceClock(20);
+        }
+        daisycola::AdvanceClock(21333 - 42 * 20);
+    }
+    EXPECT_EQ(rises, 1);
+    EXPECT_EQ(falls, 1);
+    EXPECT_EQ(Held(), std::vector<int>{});
+}
+
 TEST_F(Board, EncoderTurnsReachTheRightEncoder)
 {
     for(int n = 1; n <= champi::kNumEncoders; n++)

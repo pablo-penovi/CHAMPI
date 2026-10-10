@@ -37,6 +37,12 @@ constexpr int kKeyBits[kNumKeys] = {
 // The ENCn push on the button chain, or -1 for ENC5, whose push is a GPIO.
 constexpr int kPushBits[kNumEncoders] = {kEnc1Push, kEnc2Push, kEnc3Push, kEnc4Push, -1, kEnc6Push};
 
+// The firmware debounces the button chain over 8 reads in different milliseconds, but with the
+// host's audio clock it reads in bursts, one per host period, so a tap can come and go between
+// two bursts. Holding each level for 10 such reads lets every tap through, with 2 to spare for a
+// read that falls on a millisecond boundary.
+constexpr int kButtonHoldReads = 10;
+
 const daisy::Pin kEnc5Push   = seed::D10;
 const daisy::Pin kJackDetect = seed::D21; // high with a plug in
 
@@ -51,7 +57,7 @@ int CheckIndex(int n, int count, const char* what)
 
 void PanelState::Attach()
 {
-    button_chain_  = daisycola::AttachSr4021(seed::D8, seed::D7, seed::D9, 5);
+    button_chain_  = daisycola::AttachSr4021(seed::D8, seed::D7, seed::D9, 5, kButtonHoldReads);
     encoder_chain_ = daisycola::AttachSr4021(seed::D22, seed::D23, seed::D19, 1);
 
     // ENC1-4 have A and B on encoder-chain inputs 2(n-1) and 2(n-1)+1; ENC5 and ENC6 use GPIOs.
