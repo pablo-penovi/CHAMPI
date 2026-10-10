@@ -3,6 +3,12 @@
   <img src="docs/assets/champi-title.svg" alt="CHAMPI" height="160">
 </p>
 
+<p align="center">
+  <img src="docs/assets/demo-boot.gif" alt="CHAMPI booting: TAPE's rainbow sweep across the panel" width="32%">
+  <img src="docs/assets/demo-knobs.gif" alt="Playing a scale on CHAMPI while turning its knobs" width="32%">
+  <img src="docs/assets/demo-looper.gif" alt="Recording a loop on CHAMPI, overdubbing a second one and scrubbing the tape" width="32%">
+</p>
+
 CHAMPI is a native Linux virtual instrument that runs the real
 [CHOMPI](https://github.com/CHOMPI-Club/CHOMPI) TAPE firmware on x86.
 
