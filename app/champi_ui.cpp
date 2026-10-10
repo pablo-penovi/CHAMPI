@@ -1150,11 +1150,18 @@ class ChampiUI : public UI
         circle(x, y, r);
         fillPaint(radialGradient(x - r * 0.3f, y - r * 0.4f, r * 0.2f, r * 1.1f, top, Color(196, 196, 192)));
         fill();
-        beginPath(); // the pointer
-        moveTo(x + r * 0.2f * std::cos(angle), y + r * 0.2f * std::sin(angle));
-        lineTo(x + r * 0.8f * std::cos(angle), y + r * 0.8f * std::sin(angle));
-        strokeColor(Color(50, 50, 52));
-        strokeWidth(0.8f);
+        // Grip ridges all round instead of a pointer: the encoders turn endlessly and have no zero to
+        // point at, but the ridges still show the knob turning, a detent at a time.
+        constexpr int kRidges = 8;
+        beginPath();
+        for(int i = 0; i < kRidges; i++)
+        {
+            const float a = angle + 2 * kPi * i / kRidges;
+            moveTo(x + r * 0.55f * std::cos(a), y + r * 0.55f * std::sin(a));
+            lineTo(x + r * 0.85f * std::cos(a), y + r * 0.85f * std::sin(a));
+        }
+        strokeColor(Color(120, 120, 122));
+        strokeWidth(0.5f);
         lineCap(ROUND);
         stroke();
         lineCap(BUTT);
