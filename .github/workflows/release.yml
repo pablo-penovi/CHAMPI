@@ -1,6 +1,7 @@
 # Releases CHAMPI when VERSION.md names a version newer than every vX.Y.Z tag and release on GitHub
 # (or there are none yet): builds with GCC 16, runs the tests, and publishes a Linux x86_64 tarball
-# with the executable and the factory SD card profile it seeds new cards from.
+# with the executable, TAPE's firmware library it loads, and the factory SD card profile it seeds
+# new cards from.
 name: Release
 
 on:
@@ -56,7 +57,8 @@ jobs:
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-24.04
     # GCC 16, as CHAMPI is developed with. The image is Debian 13, so the binary needs glibc 2.41
-    # or newer; libstdc++ is linked in, since the image's GCC isn't the system one.
+    # or newer; libstdc++ is linked into the executable and the firmware library, since the
+    # image's GCC isn't the system one.
     container: gcc:16
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -79,7 +81,8 @@ jobs:
         run: |
           gcc --version
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
           cmake --build build -j"$(nproc)"
 
       - name: Test
@@ -89,10 +92,11 @@ jobs:
         run: |
           name="champi-$VERSION-linux-x86_64"
           mkdir -p "dist/$name/card-profiles"
-          cp build/bin/champi README.md LICENSE "dist/$name/"
+          cp build/bin/champi build/bin/libchampi_fw_tape.so README.md LICENSE "dist/$name/"
           cp -r third_party/CHOMPI/firmware/card-profiles/tape-2.0 "dist/$name/card-profiles/"
           cp third_party/CHOMPI/LICENSE "dist/$name/card-profiles/CHOMPI-LICENSE"
           strip "dist/$name/champi"
+          strip --strip-unneeded "dist/$name/libchampi_fw_tape.so"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@v7
@@ -121,4 +125,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "CHAMPI $VERSION" \
             --generate-notes \
-            --notes "Linux x86_64, for distributions with glibc 2.41 or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch and later). Unpack it and run ./champi from the folder, keeping card-profiles/ next to the executable. It needs libjack (JACK or PipeWire's JACK), libsamplerate and OpenGL installed: see the README."
+            --notes "Linux x86_64, for distributions with glibc 2.41 or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch and later). Unpack it and run ./champi from the folder, keeping libchampi_fw_tape.so and card-profiles/ next to the executable. It needs libjack (JACK or PipeWire's JACK), libsamplerate and OpenGL installed: see the README."

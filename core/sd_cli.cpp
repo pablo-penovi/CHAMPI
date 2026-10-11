@@ -1,6 +1,7 @@
 #include "sd_cli.h"
 
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
 
 #include "sd_card.h"
@@ -9,10 +10,11 @@ namespace fs = std::filesystem;
 
 namespace champi
 {
-const char* const kSdUsage = "  --sd-image <file>   card image (default: ~/.local/share/champi/sdcard.img)\n"
-                             "  --sd-reset          replace the card with the factory card\n"
-                             "  --sd-import <path>  copy a file, or a directory's contents, to the card\n"
-                             "  --sd-export <dir>   copy the whole card into a directory\n";
+const char* const kSdUsage = "  --sd-dir <folder>   the folder to use as the card\n"
+                             "  --sd-reset --yes    restore the factory samples, options.json,\n"
+                             "                      presets.json and firmware file on the card\n"
+                             "                      (--sd-dir, or ~/.local/share/champi/cards/default),\n"
+                             "                      leaving other files alone, and exit\n";
 
 SdOptions ParseSdOptions(std::vector<std::string>& args)
 {
@@ -36,45 +38,42 @@ SdOptions ParseSdOptions(std::vector<std::string>& args)
             return args[++i];
         };
 
-        if(arg == "--sd-image")
-            options.image = value();
-        else if(arg == "--sd-import")
-            options.imports.push_back(value());
-        else if(arg == "--sd-export")
-            options.export_dir = value();
+        if(arg == "--sd-dir")
+            options.dir = value();
         else if(arg == "--sd-reset" && !inline_value)
             options.reset = true;
+        else if(arg == "--yes")
+            options.yes = true;
+        else if(arg == "--sd-image")
+            throw std::invalid_argument("--sd-image was removed in 1.3: the card is a folder now. Use --sd-dir "
+                                        "<folder>");
+        else if(arg == "--sd-import" || arg == "--sd-export")
+            throw std::invalid_argument(arg + " was removed in 1.3: the card is a folder now, so copy files in and "
+                                              "out of it with your file manager. Use --sd-dir <folder> to choose it");
         else
             rest.push_back(args[i]);
     }
 
-    if(options.image.empty())
-        options.image = DefaultSdImagePath();
+    if(options.reset && !options.yes)
+        throw std::invalid_argument("--sd-reset overwrites the card's factory files; add --yes to go ahead");
+    if(options.yes && !options.reset)
+        throw std::invalid_argument("--yes goes with --sd-reset");
     args = std::move(rest);
     return options;
 }
 
-void RunSdCommands(const SdOptions& options)
+void ResetCard(const fs::path& dir)
 {
+    const fs::path card    = dir.empty() ? DefaultCardDir() : dir;
     const fs::path factory = FactoryCardDir();
-    if(options.reset)
+    if(!fs::exists(card))
     {
-        std::printf("Resetting %s to the factory card\n", options.image.c_str());
-        CreateCard(options.image, factory);
+        std::printf("Creating %s from the factory card\n", card.c_str());
+        CreateCard(card, factory);
+        return;
     }
-    else if(EnsureCard(options.image, factory))
-        std::printf("Created %s from the factory card\n", options.image.c_str());
-
-    for(const auto& path : options.imports)
-    {
-        std::printf("Importing %s\n", path.c_str());
-        ImportToCard(options.image, path);
-    }
-    if(options.export_dir)
-    {
-        std::printf("Exporting to %s\n", options.export_dir->c_str());
-        ExportFromCard(options.image, *options.export_dir);
-    }
+    std::printf("Restoring the factory files on %s\n", card.c_str());
+    RestoreFactoryFiles(card, factory);
 }
 
 } // namespace champi

@@ -1,6 +1,9 @@
-// champi-headless: runs CHAMPI without a UI. It manages the SD card, and runs the firmware from a
-// script (see script.h), writing the master output to a WAV file and the LEDs and script events to
-// a log.
+// champi-headless: runs CHAMPI without a UI. It runs the firmware from a script (see script.h),
+// writing the master output to a WAV file and the LEDs and script events to a log.
+//
+// The card is the folder given with --sd-dir, which must pass the card check. Without one, the run
+// gets a fresh copy of the factory card in a temporary folder, removed afterwards, so scripted runs
+// never write to the user's cards.
 //
 // The log has one line per event: `<ms> <frame> <event>`, where ms is the time since the firmware
 // started and frame is how many audio frames the WAV holds at that point. Events are `start`,
@@ -18,13 +21,16 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
+#include "card_check.h"
 #include "daisycola/host.h"
 #include "led_frame.h"
 #include "midi_splitter.h"
 #include "runtime.h"
 #include "script.h"
+#include "sd_card.h"
 #include "sd_cli.h"
 #include "wav_writer.h"
 
@@ -48,7 +54,7 @@ void PrintUsage()
                 "  --script <file>     run the firmware from a script (- for stdin)\n"
                 "  --wav <file>        write the master output, as 32-bit float stereo\n"
                 "  --log <file>        write the LED and event log\n\n"
-                "SD card (runs before the script):\n%s",
+                "SD card (default: a temporary copy of the factory card):\n%s",
                 kSdUsage);
 }
 
@@ -96,6 +102,32 @@ std::vector<Command> LoadScript(const fs::path& path)
     return ParseScript(in);
 }
 
+// A copy of the factory card in a temporary folder, removed with the object.
+class TempCard
+{
+  public:
+    TempCard()
+    {
+        std::string tmpl = (fs::temp_directory_path() / "champi-card-XXXXXX").string();
+        if(!mkdtemp(tmpl.data()))
+            throw std::runtime_error("can't create a temporary folder for the card");
+        root_ = tmpl;
+        CreateCard(Dir(), FactoryCardDir());
+    }
+    ~TempCard()
+    {
+        std::error_code ignored;
+        fs::remove_all(root_, ignored);
+    }
+    TempCard(const TempCard&)            = delete;
+    TempCard& operator=(const TempCard&) = delete;
+
+    fs::path Dir() const { return root_ / "card"; }
+
+  private:
+    fs::path root_;
+};
+
 // One firmware run: drives the panel from the script and records what comes out.
 class Session
 {
@@ -118,11 +150,11 @@ class Session
             std::fclose(log_);
     }
 
-    void Run(const fs::path& sd_image, const std::vector<Command>& script)
+    void Run(const fs::path& card, const std::vector<Command>& script)
     {
         Runtime& runtime = Runtime::Get();
         start_           = std::chrono::steady_clock::now();
-        runtime.Start(sd_image);
+        runtime.Start(card);
         Log("start");
 
         try
@@ -188,7 +220,6 @@ class Session
             case Type::kUsb: runtime.Charger().SetUsbPower(c.value); break;
             case Type::kBattery: runtime.Charger().SetBatteryMillivolts(uint32_t(c.value)); break;
             case Type::kInput: inputs_[c.target] = {c.hz, c.level, 0}; break;
-            case Type::kSd: runtime.Card().SetInserted(c.value); break;
             case Type::kMidiLoop: midi_loop_ = c.value; break;
             case Type::kMark: break;
         }
@@ -362,16 +393,33 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "champi-headless: --wav and --log need --script\n");
             return 2;
         }
-        if(!run.script && !sd.HasCommands())
+        if(!run.script && !sd.reset)
         {
             PrintUsage();
             return 2;
         }
 
         const std::vector<Command> script = run.script ? LoadScript(*run.script) : std::vector<Command>{};
-        RunSdCommands(sd);
-        if(run.script)
-            Session(run).Run(sd.image, script);
+        if(sd.reset)
+            ResetCard(sd.dir);
+        if(!run.script)
+            return 0;
+
+        std::unique_ptr<TempCard> temp;
+        if(!sd.dir.empty())
+        {
+            const std::vector<CardProblem> problems = CheckCard(sd.dir);
+            if(!problems.empty())
+            {
+                std::fprintf(stderr, "champi-headless: %s can't be a card:\n", sd.dir.c_str());
+                for(const CardProblem& p : problems)
+                    std::fprintf(stderr, "  %s\n", ToString(p).c_str());
+                return 1;
+            }
+        }
+        else
+            temp = std::make_unique<TempCard>();
+        Session(run).Run(temp ? temp->Dir() : sd.dir, script);
         return 0;
     }
     catch(const std::invalid_argument& e)

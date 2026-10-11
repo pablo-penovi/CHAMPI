@@ -158,12 +158,15 @@ Command ParseCommand(const std::vector<std::string>& words)
         else
             throw std::invalid_argument("expected sine or off, not " + words[2]);
     }
-    else if(name == "sd" || name == "midiloop")
+    else if(name == "midiloop")
     {
         args(1, 1);
-        c.type  = name == "sd" ? Command::Type::kSd : Command::Type::kMidiLoop;
-        c.value = name == "sd" ? ParseSwitch(words[1], "in", "out") : ParseSwitch(words[1], "on", "off");
+        c.type  = Command::Type::kMidiLoop;
+        c.value = ParseSwitch(words[1], "on", "off");
     }
+    else if(name == "sd")
+        throw std::invalid_argument("sd out|in was removed in 1.3: the card can't be pulled out any more. Run "
+                                    "with --sd-dir to choose the card");
     else if(name == "mark")
     {
         if(words.size() < 2)

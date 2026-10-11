@@ -5,9 +5,10 @@
 // Keys and encoders are numbered as printed on the board: KEY1-KEY28 and ENC1-ENC6. KEY1-15 are
 // the white row, KEY16-25 the black row, KEY26 the CHOMPI key, KEY27 play and KEY28 loop.
 //
-// Attach wires everything once per process, before the firmware starts. The other calls may be
-// made from any host thread; the levels live in daisycola, so there is no state to keep in sync,
-// bar the headphone jack's.
+// Attach wires everything before the firmware starts, and again after each power cycle, with the
+// toggle and the jacks where the player left them. The other calls may be made from any host
+// thread. Between Detach and the next Attach, while the firmware library is being swapped, they
+// do nothing and read everything as released: a MIDI controller can keep playing meanwhile.
 #pragma once
 
 #include <atomic>
@@ -24,9 +25,14 @@ constexpr int kLoopKey   = 28;
 class PanelState
 {
   public:
-    /** Wires the panel to daisycola with every key and push released, the toggle on and no
-     *  line-in or headphone plug. Once per process, before the firmware starts. */
+    /** Wires the panel to daisycola with every key and push released, and the toggle and the
+     *  line-in jack as last set (at first, the toggle on and no plug). Before the firmware starts,
+     *  from the thread that loads it. */
     void Attach();
+
+    /** Stops using daisycola's board until the next Attach, waiting for calls in progress on
+     *  other threads. Before a power cycle, from the thread that runs it. */
+    void Detach();
 
     /** Presses or releases KEYn (1 to 28). */
     void SetKey(int key, bool pressed);
@@ -58,9 +64,27 @@ class PanelState
     bool Phones() const { return phones_.load(std::memory_order_relaxed); }
 
   private:
+    // Counts a host call in use of the board for Detach to wait on. Stays false if the board isn't
+    // attached, and the call does nothing then.
+    class Use
+    {
+      public:
+        explicit Use(const PanelState& panel);
+        ~Use();
+        explicit operator bool() const { return attached_; }
+
+      private:
+        const PanelState& panel_;
+        bool              attached_;
+    };
+
     int button_chain_  = -1; // five CD4021s: keys, toggle and the pushes of ENC1-4 and ENC6
     int encoder_chain_ = -1; // one CD4021: A and B of ENC1-4
     int encoders_[kNumEncoders] = {};
+    std::atomic<bool> attached_{false};
+    mutable std::atomic<int> users_{0};
+    std::atomic<bool> toggle_{true};
+    std::atomic<bool> line_in_{false};
     std::atomic<bool> phones_{false};
 };
 
