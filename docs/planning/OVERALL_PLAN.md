@@ -1,5 +1,8 @@
 # CHAMPI implementation plan
 
+> Historical: in 1.3.0 the SD card became a folder on the host, replacing the disk image this plan
+> describes (see [CHANGELOG.md](../../CHANGELOG.md)).
+
 CHAMPI is a native Linux virtual instrument that runs the real CHOMPI TAPE firmware on x86.
 The design is in [DETAILED_OVERALL_PLAN.md](DETAILED_OVERALL_PLAN.md) (formerly `PORT.md`). This
 file splits that design into chunks. Each chunk ends with something that builds, has tests, and

@@ -157,8 +157,6 @@ bool MouseControl::Press(float x, float y, Clock::time_point now)
             charger_.SetUsbPower(!charger_.UsbPower());
             return true;
         case Hit::Kind::kSdCard:
-            card_.SetInserted(!card_.Inserted());
-            return true;
         case Hit::Kind::kNone:
             break;
     }

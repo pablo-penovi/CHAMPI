@@ -39,9 +39,8 @@ TEST(Script, ParsesEveryCommand)
                          "input line sine 440\n"
                          "input mic sine 220.5 0.25\n"
                          "input mic off\n"
-                         "sd out\n"
                          "midiloop on\n");
-    ASSERT_EQ(c.size(), 19u);
+    ASSERT_EQ(c.size(), 18u);
     EXPECT_EQ(c[0].type, Type::kBoot);
     EXPECT_EQ(c[0].ms, 60000u);
     EXPECT_EQ(c[0].line, 2);
@@ -78,10 +77,24 @@ TEST(Script, ParsesEveryCommand)
     EXPECT_EQ(c[15].level, 0.25);
     EXPECT_EQ(c[16].type, Type::kInput);
     EXPECT_EQ(c[16].hz, 0);
-    EXPECT_EQ(c[17].type, Type::kSd);
-    EXPECT_EQ(c[17].value, 0);
-    EXPECT_EQ(c[18].type, Type::kMidiLoop);
-    EXPECT_EQ(c[18].value, 1);
+    EXPECT_EQ(c[17].type, Type::kMidiLoop);
+    EXPECT_EQ(c[17].value, 1);
+}
+
+TEST(Script, SdWasRemoved)
+{
+    for(const char* line : {"sd out\n", "sd in\n"})
+        try
+        {
+            Parse(std::string("boot\n") + line);
+            ADD_FAILURE() << "accepted " << line;
+        }
+        catch(const ScriptError& e)
+        {
+            EXPECT_EQ(std::string(e.what()),
+                      "line 2: sd out|in was removed in 1.3: the card can't be pulled out any more. Run with --sd-dir "
+                      "to choose the card");
+        }
 }
 
 TEST(Script, ParsesDurations)
@@ -103,7 +116,7 @@ TEST(Script, RejectsBadLinesWithTheirNumber)
         "mark\n",          "boot 1s 2s\n",  "key 1x down\n",
         "input\n",         "input aux sine 440\n", "input mic\n", "input mic sine\n",
         "input mic sine 0\n", "input mic sine 440 2\n", "input mic off 1\n", "input mic saw 440\n",
-        "sd\n",            "sd up\n",       "midiloop in\n",
+        "midiloop in\n",
     };
     for(const char* line : bad)
     {

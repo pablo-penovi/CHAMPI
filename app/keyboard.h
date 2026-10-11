@@ -13,7 +13,6 @@
 #include <string_view>
 #include <vector>
 
-#include "card_slot.h"
 #include "mp2722.h"
 #include "panel_state.h"
 
@@ -42,7 +41,7 @@ struct Action
         kLineIn,        // plugs or unplugs the line-in jack
         kPhones,        // plugs or unplugs the headphone jack
         kUsb,           // plugs or unplugs USB power
-        kSdCard,        // pulls the SD card out or puts it back
+        kInsertCard,    // opens Insert card (the window handles it)
         kConnections,   // opens and closes the connections menu (the window handles it)
     };
     Kind kind  = Kind::kNone;
@@ -66,7 +65,8 @@ std::optional<Action> ActionFromName(std::string_view name);
  *     line_in = []          # no key
  *
  * Each action it names loses its default keys, and each key it names leaves whatever it did
- * before. Actions it doesn't name keep their defaults.
+ * before. Actions it doesn't name keep their defaults. sd_card, insert_card's name before 1.3,
+ * still loads, until 2.0.
  */
 class Keymap
 {
@@ -105,7 +105,7 @@ class Keymap
  *   turning it every kRepeatEvery while held (the window's own key repeat should be off), by more
  *   each time the longer they're held. The push key holds it pushed; it stays on the encoder it
  *   pushed even if another is selected meanwhile.
- * - The toggle, line-in, headphone, USB and SD-card keys flip on a press.
+ * - The toggle, line-in, headphone and USB keys flip on a press.
  *
  * Times come from the caller, so it can be driven without a clock.
  */
@@ -123,12 +123,13 @@ class KeyboardControl
     /** ENC4 is selected at first: the speed knob, leftmost. */
     static constexpr int kFirstSelected = 4;
 
-    KeyboardControl(PanelState& panel, Mp2722& charger, CardSlot& card, Keymap keymap)
-        : panel_(panel), charger_(charger), card_(card), keymap_(std::move(keymap))
+    KeyboardControl(PanelState& panel, Mp2722& charger, Keymap keymap)
+        : panel_(panel), charger_(charger), keymap_(std::move(keymap))
     {
     }
 
-    /** A key went down. Returns false if it isn't mapped to the panel (the connections key isn't).
+    /** A key went down. Returns false if it isn't mapped to the panel (the connections and Insert
+     *  card keys aren't: the window handles them).
      *  Repeats of a held key are ignored. */
     bool Press(Scancode code, Clock::time_point now);
     /** A key went up. Returns false if it wasn't held. */
@@ -158,7 +159,6 @@ class KeyboardControl
 
     PanelState&                 panel_;
     Mp2722&                     charger_;
-    CardSlot&                   card_;
     Keymap                      keymap_;
     std::map<Scancode, Held>    held_;
     int                         key_holds_[kNumKeys] = {};

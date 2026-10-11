@@ -156,7 +156,7 @@ class PanelMouse : public ::testing::Test
     }
     static void TearDownTestSuite() { daisycola::UseManualClock(false); }
 
-    void SetUp() override { mouse_ = std::make_unique<MouseControl>(panel_, charger_, card_); }
+    void SetUp() override { mouse_ = std::make_unique<MouseControl>(panel_, charger_); }
 
     void TearDown() override
     {
@@ -169,7 +169,6 @@ class PanelMouse : public ::testing::Test
         panel_.SetToggle(true);
         panel_.SetLineIn(false);
         panel_.SetPhones(false);
-        card_.SetInserted(true);
     }
 
     Clock::time_point At(int ms) const { return t0_ + std::chrono::milliseconds(ms); }
@@ -179,7 +178,6 @@ class PanelMouse : public ::testing::Test
 
     static champi::PanelState     panel_;
     champi::Mp2722                charger_;
-    champi::CardSlot              card_;
     std::unique_ptr<MouseControl> mouse_;
     const Clock::time_point       t0_ = Clock::now();
 };
@@ -374,7 +372,7 @@ TEST_F(PanelMouse, TheToggleAndTheJacksFlipOnAClick)
     EXPECT_FALSE(panel_.Phones());
 }
 
-TEST_F(PanelMouse, UsbPlugsTheSdCardPullsAndTheWheelSetsTheBattery)
+TEST_F(PanelMouse, UsbPlugsTheSdSlotIsTheWindowsAndTheWheelSetsTheBattery)
 {
     const layout::Rect u = champi::UsbSocket(), d = champi::SdSlot();
     ASSERT_TRUE(charger_.UsbPower());
@@ -385,13 +383,10 @@ TEST_F(PanelMouse, UsbPlugsTheSdCardPullsAndTheWheelSetsTheBattery)
     EXPECT_TRUE(charger_.UsbPower());
     mouse_->Release(At(30));
 
-    ASSERT_TRUE(card_.Inserted());
-    mouse_->Press(d.x + 1, d.y + 1, At(40));
-    EXPECT_FALSE(card_.Inserted());
+    // A click on the SD slot opens Insert card, which the window does: the panel plays nothing.
+    EXPECT_EQ(champi::HitTest(d.x + 1, d.y + 1).kind, champi::Hit::Kind::kSdCard);
+    EXPECT_FALSE(mouse_->Press(d.x + 1, d.y + 1, At(40)));
     mouse_->Release(At(50));
-    mouse_->Press(d.x + 1, d.y + 1, At(60));
-    EXPECT_TRUE(card_.Inserted());
-    mouse_->Release(At(70));
 
     // A step is 100 mV, between 2.8 V and full at 4.2 V, which is when charging is done.
     charger_.SetBatteryMillivolts(4100);

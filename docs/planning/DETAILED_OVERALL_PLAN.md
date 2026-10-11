@@ -1,5 +1,8 @@
 # Plan: native Linux virtual CHOMPI (TAPE first)
 
+> Historical: in 1.3.0 the SD card became a folder on the host, replacing the disk image this plan
+> describes (see [CHANGELOG.md](../../CHANGELOG.md)).
+
 ## Context
 
 The repo is the discontinued, MIT-licensed CHOMPI release: hardware files plus three firmwares (TAPE sampler, TEMPO, WAVE) for a Daisy Seed (STM32H750, libDaisy/DaisySP). The goal is a native Linux C++ app that recreates the instrument as faithfully as possible:

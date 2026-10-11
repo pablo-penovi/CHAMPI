@@ -1,6 +1,6 @@
 // Golden tests: TAPE running in champi-headless, driven by scripts, checked through the WAV and the
-// LED log it writes. Each run is its own champi-headless process, since a firmware runs once per
-// process.
+// LED log it writes. Each run is its own champi-headless process. The card is a folder: a copy of
+// the factory card made for the test, or champi-headless's own temporary one.
 //
 // After boot TAPE is in JAMMI mode on slot 15, which holds its built-in sample: a C4 sine
 // (261.63 Hz) on the right channel. A key plays it transposed by its note in key_map minus 60:
@@ -20,7 +20,6 @@
 #include <sys/wait.h>
 #include <vector>
 
-#include "daisycola/host.h"
 #include "test_util.h"
 
 namespace
@@ -178,14 +177,25 @@ std::vector<Event> ReadLog(const std::filesystem::path& path)
     return events;
 }
 
-// Runs champi-headless on `card` with a script.
-Result RunHeadless(const TempDir& dir, const std::filesystem::path& card, const std::string& script)
+// A fresh copy of the factory card in the test's folder.
+std::filesystem::path NewCard(const TempDir& dir)
+{
+    const std::filesystem::path card = dir / "card";
+    std::filesystem::copy(CHAMPI_FACTORY_CARD_DIR, card);
+    return card;
+}
+
+// Runs champi-headless with a script, on `card`, or on its own temporary card if it's empty.
+// `env` goes before the command, as VAR=value pairs.
+Result RunHeadless(const TempDir& dir, const std::filesystem::path& card, const std::string& script,
+                   const std::string& env = "")
 {
     WriteHostFile(dir / "script.txt", script);
-    const std::string command = std::string("'") + CHAMPI_HEADLESS + "' --sd-image '" + card.string()
-                                + "' --script '" + (dir / "script.txt").string() + "' --wav '"
+    const std::string command = env + " '" + CHAMPI_HEADLESS + "'"
+                                + (card.empty() ? std::string() : " --sd-dir '" + card.string() + "'")
+                                + " --script '" + (dir / "script.txt").string() + "' --wav '"
                                 + (dir / "out.wav").string() + "' --log '" + (dir / "out.log").string()
-                                + "' > /dev/null";
+                                + "' > /dev/null 2> '" + (dir / "err.txt").string() + "'";
     const int status = std::system(command.c_str());
     Result    run;
     run.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -210,23 +220,12 @@ std::pair<int, int> LitLeds(const std::string& text)
     return {lit, int(colours.size())};
 }
 
-// Runs champi-headless's SD-card commands on `card`, such as --sd-import.
-int RunSdCommand(const std::filesystem::path& card, const std::string& args)
-{
-    const std::string command = std::string("'") + CHAMPI_HEADLESS + "' --sd-image '" + card.string()
-                                + "' " + args + " > /dev/null";
-    const int status = std::system(command.c_str());
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-}
-
 // The file names in the card's root.
 std::vector<std::string> CardFiles(const std::filesystem::path& card)
 {
-    daisycola::SdOpenImage(card.string());
     std::vector<std::string> names;
-    for(const auto& e : daisycola::SdList("/"))
-        names.push_back(e.name);
-    daisycola::SdCloseImage();
+    for(const auto& e : std::filesystem::directory_iterator(card))
+        names.push_back(e.path().filename().string());
     return names;
 }
 
@@ -261,10 +260,7 @@ std::string Tap(int key)
 
 std::string ReadCardFile(const std::filesystem::path& card, const std::string& name)
 {
-    daisycola::SdOpenImage(card.string());
-    const std::vector<uint8_t> data = daisycola::SdReadFile(name);
-    daisycola::SdCloseImage();
-    return std::string(data.begin(), data.end());
+    return ReadHostFile(card / name);
 }
 
 // The first number in presets.json: JAMMI, bank A, slot 1, the speed knob, times 1000.
@@ -278,7 +274,7 @@ int SlotOneSpeed(const std::string& presets)
 TEST(Headless, BootsAndPlaysTheRainbow)
 {
     TempDir   dir;
-    const Result run = RunHeadless(dir, dir / "card.img", kBoot);
+    const Result run = RunHeadless(dir, {}, kBoot);
     ASSERT_EQ(run.exit_code, 0);
 
     size_t booted = 0;
@@ -304,7 +300,7 @@ TEST(Headless, BootsAndPlaysTheRainbow)
 TEST(Headless, KeysPlayTheBuiltInSampleAtTheirPitch)
 {
     TempDir   dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
+    const Result run = RunHeadless(dir, {},
                                 std::string(kBoot)
                                     + "key 8 down\nwait 1s\nkey 8 up\nwait 500ms\n"
                                       "key 1 down\nwait 1s\nkey 1 up\nwait 500ms\n");
@@ -321,7 +317,7 @@ TEST(Headless, TheSpeedKnobChangesThePitch)
 {
     // ENC4 is the speed knob. It starts at 0.83 (1x) and moves 0.003 per detent.
     TempDir   dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
+    const Result run = RunHeadless(dir, {},
                                 std::string(kBoot)
                                     + "turn 4 +20\nwait 500ms\n"
                                       "key 8 down\nwait 1s\nkey 8 up\nwait 300ms\n"
@@ -338,10 +334,11 @@ TEST(Headless, TheSpeedKnobChangesThePitch)
     EXPECT_NEAR(run.Pitch(run.FrameOf("key 8 down", second) + 12000, 24000), down, down * 0.005);
 }
 
+// TAPE runs on the folder itself: what it saves is on disk at once.
 TEST(Headless, APresetSavedInTheShiftMenuSurvivesARestart)
 {
     TempDir   dir;
-    const auto card = dir / "card.img";
+    const auto card = NewCard(dir);
 
     // Raise the speed of the built-in sample, then save it to slot 1 (KEY1) from the shift menu:
     // hold CHOMPI, press save (KEY25), pick the slot, let go, and press CHOMPI again to confirm.
@@ -356,9 +353,9 @@ TEST(Headless, APresetSavedInTheShiftMenuSurvivesARestart)
                                        "key 26 down\nwait 100ms\nkey 26 up\n"
                                        "wait 9s\n");
     ASSERT_EQ(save.exit_code, 0);
-    const int speed = SlotOneSpeed(ReadCardFile(card, "/presets.json"));
+    const int speed = SlotOneSpeed(ReadCardFile(card, "presets.json"));
     EXPECT_EQ(speed, 890) << "slot 1 has the saved speed (factory: 830)";
-    EXPECT_NE(ReadCardFile(card, "/jammi_a1.wav"),
+    EXPECT_NE(ReadCardFile(card, "jammi_a1.wav"),
               ReadHostFile(std::filesystem::path(CHAMPI_FACTORY_CARD_DIR) / "jammi_a1.wav"))
         << "slot 1 has the built-in sample";
 
@@ -379,7 +376,7 @@ TEST(Headless, RecordsASampleFromLineInAndFromTheMic)
     // With the toggle off, the CHOMPI key records into slot 15 from line in if a plug is in, or
     // from the mic. Toggled back on, the keys play the recording: KEY8 at its own pitch.
     TempDir      dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
+    const Result run = RunHeadless(dir, {},
                                    std::string(kBoot)
                                        + "input line sine 440\ninput mic sine 330\n"
                                          "linein on\ntoggle off\nwait 300ms\n"
@@ -407,7 +404,7 @@ TEST(Headless, TheLooperRecordsOverdubsAndPauses)
     // tape stop: the loop slows down over about a second, then holds its last sample (a small DC
     // offset, which a real CHOMPI's output capacitors would block).
     TempDir      dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
+    const Result run = RunHeadless(dir, {},
                                    std::string(kBoot) + Tap(28) + "wait 200ms\n"
                                        + "key 8 down\nwait 1s\nkey 8 up\nwait 300ms\n" + Tap(28)
                                        + "wait 1500ms\n" + Tap(28) + "wait 1500ms\nmark looping\nwait 1s\n"
@@ -427,7 +424,7 @@ TEST(Headless, TheLooperRecordsOverdubsAndPauses)
 TEST(Headless, TheShiftMenuCopiesErasesAndSwitchesBanksAndModes)
 {
     TempDir    dir;
-    const auto card = dir / "card.img";
+    const auto card = NewCard(dir);
     const Result run = RunHeadless(dir, card,
                                    std::string(kBoot)
                                        + ShiftMenu({24, 1, 2}) + "wait 4s\n"  // copy slot 1 to 2
@@ -437,8 +434,8 @@ TEST(Headless, TheShiftMenuCopiesErasesAndSwitchesBanksAndModes)
     );
     ASSERT_EQ(run.exit_code, 0);
 
-    EXPECT_EQ(ReadCardFile(card, "/jammi_a2.wav"), FactoryFile("jammi_a1.wav")) << "copied";
-    EXPECT_EQ(ReadCardFile(card, "/jammi_a1.wav"), FactoryFile("jammi_a1.wav")) << "the source stays";
+    EXPECT_EQ(ReadCardFile(card, "jammi_a2.wav"), FactoryFile("jammi_a1.wav")) << "copied";
+    EXPECT_EQ(ReadCardFile(card, "jammi_a1.wav"), FactoryFile("jammi_a1.wav")) << "the source stays";
 
     const std::vector<std::string> files = CardFiles(card);
     for(const char* gone : {"jammi_a3.wav", "jammi_a3_double.wav", "jammi_b4.wav", "cubbi_a5.wav"})
@@ -450,7 +447,7 @@ TEST(Headless, TheShiftMenuCopiesErasesAndSwitchesBanksAndModes)
 TEST(Headless, OptionsOnTheCardSetMidiChannelsAndRecordLatch)
 {
     TempDir    dir;
-    const auto card = dir / "card.img";
+    const auto card = NewCard(dir);
 
     // The factory options with MIDI in on channel 2, out on channel 3 and record latch on.
     std::string options = FactoryFile("options.json");
@@ -462,8 +459,7 @@ TEST(Headless, OptionsOnTheCardSetMidiChannelsAndRecordLatch)
     set("Record Latch", "false", "true");
     set("Midi In Channel", "1", "2");
     set("Midi Out Channel", "1", "3");
-    WriteHostFile(dir / "options" / "options.json", options);
-    ASSERT_EQ(RunSdCommand(card, "--sd-import '" + (dir / "options").string() + "'"), 0);
+    WriteHostFile(card / "options.json", options);
 
     const Result run = RunHeadless(dir, card,
                                    std::string(kBoot)
@@ -484,7 +480,7 @@ TEST(Headless, OptionsOnTheCardSetMidiChannelsAndRecordLatch)
     EXPECT_NE(run.LedBefore(run.IndexOf("mark stopped"), kChompiLed), "170000") << "stopped";
 
     // TAPE writes options.json back at boot, keeping what it read.
-    EXPECT_EQ(ReadCardFile(card, "/options.json"), options);
+    EXPECT_EQ(ReadCardFile(card, "options.json"), options);
 }
 
 TEST(Headless, TestModeRunsTheFactoryTest)
@@ -512,7 +508,7 @@ TEST(Headless, TestModeRunsTheFactoryTest)
             + Tap(26) + "wait 1s\nmark closed\nwait 500ms\n";
 
     TempDir      dir;
-    const Result run = RunHeadless(dir, dir / "card.img", script);
+    const Result run = RunHeadless(dir, {}, script);
     ASSERT_EQ(run.exit_code, 0);
 
     EXPECT_GT(run.FrameOf("mark too soon"), 0u);
@@ -525,50 +521,13 @@ TEST(Headless, TestModeRunsTheFactoryTest)
     EXPECT_FALSE(run.MidiOut().empty()) << "the test sends notes";
 }
 
-TEST(Headless, PullingTheCardFallsBackToTheBuiltInSample)
-{
-    // Without its card TAPE blinks every LED red for 3 s, then plays only its built-in sample:
-    // the shift menu won't pick slot 2, and putting the card back needs a restart.
-    TempDir      dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
-                                   std::string(kBoot) + "sd out\nwait 5s\n" + ShiftMenu({2}, false)
-                                       + "wait 1s\nkey 8 down\nwait 1s\nkey 8 up\nwait 300ms\n"
-                                         "sd in\nwait 3s\nmark back in\nkey 8 down\nwait 1s\nkey 8 up\n");
-    ASSERT_EQ(run.exit_code, 0);
-
-    // Every LED red at once, then dark, then red again.
-    const size_t pulled = run.IndexOf("sd out");
-    int          flashes = 0;
-    bool         lit     = false;
-    for(size_t i = pulled; i < run.log.size() && run.log[i].ms < run.log[pulled].ms + 3000; i++)
-        if(run.log[i].text.rfind("leds ", 0) == 0)
-        {
-            const std::string& t   = run.log[i].text;
-            bool               red = true;
-            for(int led = 1; led <= 35; led++)
-            {
-                const std::string c = t.substr(5 + 7 * (led - 1), 6);
-                red &= c != "000000" && c.substr(2) == "0000";
-            }
-            if(red && !lit)
-                flashes++;
-            lit = red;
-        }
-    EXPECT_GE(flashes, 3) << "the no-card blink";
-
-    EXPECT_NEAR(run.PitchAt("key 8 down"), kC4, kC4 * 0.005) << "slot 2 wasn't picked";
-    EXPECT_NEAR(run.Pitch(run.FrameOf("key 8 down", run.IndexOf("mark back in")) + 12000, 24000), kC4,
-                kC4 * 0.005)
-        << "still the built-in sample";
-}
-
 TEST(Headless, TheFirstPressOfEachCubbiVoicePlays)
 {
     // A cubbi voice sets its play window before its file has opened, while TAPE still sees a file
     // size of 0. On the chip that arithmetic saturates and the window is accepted; daisycola's
     // ff.h makes the host do the same. Without it each voice's first press was silent.
     TempDir      dir;
-    const Result run = RunHeadless(dir, dir / "card.img",
+    const Result run = RunHeadless(dir, {},
                                    std::string(kBoot) + ShiftMenu({17}, false)
                                        + "wait 1s\n"
                                          "key 8 down\nwait 1s\nkey 8 up\nwait 500ms\n"
@@ -577,4 +536,47 @@ TEST(Headless, TheFirstPressOfEachCubbiVoicePlays)
 
     EXPECT_GT(run.Rms(run.FrameOf("key 8 down") + 12000, 24000), 5e-3) << "KEY8's first press";
     EXPECT_GT(run.Rms(run.FrameOf("key 9 down") + 12000, 24000), 5e-3) << "KEY9's first press";
+}
+
+TEST(Headless, WithNoCardGivenTheUsersCardsAreLeftAlone)
+{
+    TempDir dir;
+    std::filesystem::create_directories(dir / "home");
+    std::filesystem::create_directories(dir / "tmp");
+    const std::string env = "HOME='" + (dir / "home").string() + "' XDG_DATA_HOME='" + (dir / "data").string()
+                            + "' TMPDIR='" + (dir / "tmp").string() + "'";
+    const Result run = RunHeadless(dir, {}, std::string(kBoot) + Tap(8), env);
+    ASSERT_EQ(run.exit_code, 0) << ReadHostFile(dir / "err.txt");
+    EXPECT_FALSE(std::filesystem::exists(dir / "data")) << "no cards folder made";
+    EXPECT_TRUE(std::filesystem::is_empty(dir / "home"));
+    EXPECT_TRUE(std::filesystem::is_empty(dir / "tmp")) << "the temporary card is gone";
+}
+
+TEST(Headless, ACardThatFailsTheCheckIsRefused)
+{
+    TempDir    dir;
+    const auto card = NewCard(dir);
+    WriteHostFile(card / "kick.wav", FactoryFile("jammi_a1.wav"));
+    WriteHostFile(card / "notes.txt", "x");
+    const Result run = RunHeadless(dir, card, kBoot);
+    EXPECT_EQ(run.exit_code, 1);
+    const std::string err = ReadHostFile(dir / "err.txt");
+    EXPECT_NE(err.find("can't be a card"), std::string::npos) << err;
+    EXPECT_NE(err.find("  kick.wav: TAPE only reads samples named"), std::string::npos) << err;
+    EXPECT_NE(err.find("  notes.txt: TAPE doesn't use this file."), std::string::npos) << err;
+    EXPECT_TRUE(run.log.empty()) << "TAPE never started";
+}
+
+TEST(Headless, PullingTheCardWasRemoved)
+{
+    TempDir      dir;
+    const Result run = RunHeadless(dir, {}, std::string(kBoot) + "sd out\n");
+    EXPECT_EQ(run.exit_code, 2);
+    EXPECT_NE(ReadHostFile(dir / "err.txt").find("sd out|in was removed in 1.3"), std::string::npos);
+
+    const std::string command = std::string("'") + CHAMPI_HEADLESS + "' --sd-image card.img 2> '"
+                                + (dir / "err.txt").string() + "'";
+    const int status = std::system(command.c_str());
+    EXPECT_EQ(WIFEXITED(status) ? WEXITSTATUS(status) : -1, 2);
+    EXPECT_NE(ReadHostFile(dir / "err.txt").find("Use --sd-dir"), std::string::npos);
 }

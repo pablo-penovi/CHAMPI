@@ -1,8 +1,9 @@
 // champi: the CHOMPI TAPE firmware as a standalone JACK app.
 //
 // DPF's standalone has its own main(), compiled here as dpf_jack_main. This one handles CHAMPI's
-// options first: the SD-card commands run and exit, as in champi-headless; otherwise the card is
-// created if needed and the app starts on it.
+// options first: --sd-reset runs and exits, as in champi-headless; otherwise it picks the card to
+// start with (--sd-dir, or card.toml's, or the default card, created if needed) and the app
+// starts on it.
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -13,8 +14,11 @@
 
 #include "DistrhoPluginInfo.h"
 #include "app.h"
+#include "card_check.h"
+#include "card_settings.h"
 #include "jack_monitor.h"
 #include "routing.h"
+#include "sd_card.h"
 #include "sd_cli.h"
 
 int dpf_jack_main(int argc, char* argv[]);
@@ -55,8 +59,56 @@ void PrintUsage()
                 "  --print-keymap      print the keymap in use as keymap.toml, and exit\n"
                 "  --test-mode         start in TAPE's factory test, as when ENC6 is held at\n"
                 "                      power-on\n\n"
-                "SD card (--sd-reset, --sd-import and --sd-export run and exit):\n%s",
+                "SD card (default: the last card inserted, or ~/.local/share/champi/cards/default):\n%s",
                 kSdUsage);
+}
+
+// The card to start with, and card.toml as it should be. --sd-dir must pass the check; card.toml's
+// cards and the default card are tried in turn, and the window says why any was passed over.
+void ChooseCard(const SdOptions& sd, const std::filesystem::path& config)
+{
+    if(!sd.dir.empty())
+    {
+        const std::vector<CardProblem> problems = CheckCard(sd.dir);
+        if(!problems.empty())
+        {
+            std::string message = sd.dir.string() + " can't be a card:";
+            for(const CardProblem& p : problems)
+                message += "\n  " + ToString(p);
+            throw std::runtime_error(message);
+        }
+        Options().card_dir = sd.dir;
+        return;
+    }
+
+    CardSettings settings;
+    if(!config.empty())
+    {
+        Options().card_settings_path = config / "card.toml";
+        try
+        {
+            settings = CardSettings::Load(Options().card_settings_path);
+        }
+        catch(const std::exception& e)
+        {
+            std::fprintf(stderr, "champi: %s; starting with the default card\n", e.what());
+        }
+    }
+    const StartCard start   = ChooseStartCard(settings, DefaultCardDir(), FactoryCardDir());
+    Options().card_dir      = start.dir;
+    Options().skipped_cards = start.skipped;
+    for(const SkippedCard& s : start.skipped)
+        std::fprintf(stderr, "champi: passed over the card %s: %s\n", s.dir.c_str(),
+                     ToString(s.problems.front()).c_str());
+    if(!(start.settings == settings) && !Options().card_settings_path.empty())
+        try
+        {
+            start.settings.Save(Options().card_settings_path);
+        }
+        catch(const std::exception& e)
+        {
+            std::fprintf(stderr, "champi: can't save the card in use: %s\n", e.what());
+        }
 }
 } // namespace
 } // namespace champi
@@ -145,10 +197,12 @@ int main(int argc, char** argv)
         }
 
         const SdOptions sd = ParseSdOptions(args);
-        RunSdCommands(sd);
-        if(sd.HasCommands())
+        if(sd.reset)
+        {
+            ResetCard(sd.dir);
             return 0;
-        Options().sd_image = sd.image;
+        }
+        ChooseCard(sd, config);
     }
     catch(const std::invalid_argument& e)
     {

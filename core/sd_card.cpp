@@ -1,10 +1,13 @@
 #include "sd_card.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
-
-#include "daisycola/host.h"
+#include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -12,19 +15,28 @@ namespace champi
 {
 namespace
 {
-// Opens the image for the lifetime of the object, so it's closed again if a copy throws.
-class OpenCard
+bool SameName(std::string_view a, std::string_view b)
 {
-  public:
-    explicit OpenCard(const fs::path& image) { daisycola::SdOpenImage(image.string()); }
-    ~OpenCard() { daisycola::SdCloseImage(); }
-    OpenCard(const OpenCard&)            = delete;
-    OpenCard& operator=(const OpenCard&) = delete;
-};
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower((unsigned char)x) == std::tolower((unsigned char)y);
+           });
+}
+
+// The profile's files: everything at its root that's a regular file.
+std::vector<fs::path> FactoryFiles(const fs::path& factory)
+{
+    if(!fs::is_directory(factory))
+        throw std::runtime_error("SD card: card profile " + factory.string() + " not found");
+    std::vector<fs::path> files;
+    for(const fs::directory_entry& e : fs::directory_iterator(factory))
+        if(e.is_regular_file())
+            files.push_back(e.path());
+    return files;
+}
 
 } // namespace
 
-fs::path DefaultSdImagePath()
+fs::path CardsDir()
 {
     fs::path data_home;
     if(const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg)
@@ -33,7 +45,12 @@ fs::path DefaultSdImagePath()
         data_home = fs::path(home) / ".local/share";
     else
         throw std::runtime_error("SD card: neither XDG_DATA_HOME nor HOME is set");
-    return data_home / "champi" / "sdcard.img";
+    return data_home / "champi" / "cards";
+}
+
+fs::path DefaultCardDir()
+{
+    return CardsDir() / "default";
 }
 
 fs::path FactoryCardDir()
@@ -52,52 +69,54 @@ fs::path FactoryCardDir()
     return source;
 }
 
-void CreateCard(const fs::path& image, const fs::path& card_dir, uint64_t size)
+void CreateCard(const fs::path& dir, const fs::path& factory)
 {
-    if(!fs::is_directory(card_dir))
-        throw std::runtime_error("SD card: card profile " + card_dir.string() + " not found");
-    if(image.has_parent_path())
-        fs::create_directories(image.parent_path());
+    const std::vector<fs::path> files = FactoryFiles(factory);
+    const bool                  existed = fs::exists(dir);
+    if(existed && (!fs::is_directory(dir) || !fs::is_empty(dir)))
+        throw std::runtime_error(dir.string() + " already exists; choose another name or select it instead");
 
-    fs::path tmp = image;
-    tmp += ".new";
     try
     {
-        daisycola::SdCreateImage(tmp.string(), size);
-        {
-            OpenCard card(tmp);
-            daisycola::SdCopyIn(card_dir.string(), "/");
-        }
-        fs::rename(tmp, image);
+        fs::create_directories(dir);
+        for(const fs::path& f : files)
+            fs::copy_file(f, dir / f.filename());
     }
     catch(...)
     {
         std::error_code ignored;
-        fs::remove(tmp, ignored);
+        if(existed)
+            for(const fs::path& f : files)
+                fs::remove(dir / f.filename(), ignored);
+        else
+            fs::remove_all(dir, ignored);
         throw;
     }
 }
 
-bool EnsureCard(const fs::path& image, const fs::path& card_dir)
+void RestoreFactoryFiles(const fs::path& dir, const fs::path& factory)
 {
-    if(fs::exists(image))
-        return false;
-    CreateCard(image, card_dir);
-    return true;
+    if(!fs::is_directory(dir))
+        throw std::runtime_error("SD card: " + dir.string() + " isn't a folder");
+    for(const fs::path& f : FactoryFiles(factory))
+    {
+        const std::string name = f.filename().string();
+        for(const fs::directory_entry& e : fs::directory_iterator(dir))
+            if(e.path().filename() != name && SameName(e.path().filename().string(), name))
+                fs::remove(e.path());
+        fs::copy_file(f, dir / name, fs::copy_options::overwrite_existing);
+    }
 }
 
-void ImportToCard(const fs::path& image, const fs::path& host_path)
+fs::path FindCardFile(const fs::path& dir, std::string_view name)
 {
-    if(!fs::exists(host_path))
-        throw std::runtime_error("SD card: " + host_path.string() + " not found");
-    OpenCard card(image);
-    daisycola::SdCopyIn(host_path.string(), "/");
-}
-
-void ExportFromCard(const fs::path& image, const fs::path& host_dir)
-{
-    OpenCard card(image);
-    daisycola::SdCopyOut("/", host_dir.string());
+    std::error_code ec;
+    if(fs::exists(dir / name, ec))
+        return dir / name;
+    for(fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if(SameName(it->path().filename().string(), name))
+            return it->path();
+    return {};
 }
 
 int MidiInChannelFromOptions(std::string_view json)
@@ -114,6 +133,16 @@ int MidiInChannelFromOptions(std::string_view json)
     for(int digits = 0; at < json.size() && std::isdigit((unsigned char)json[at]) && digits < 3; at++, digits++)
         channel = channel * 10 + (json[at] - '0');
     return channel >= 1 && channel <= 16 ? channel - 1 : 0;
+}
+
+int MidiInChannelOfCard(const fs::path& dir)
+{
+    const fs::path options = FindCardFile(dir, "options.json");
+    if(options.empty())
+        return 0; // TAPE writes one with channel 1
+    std::ifstream in(options, std::ios::binary);
+    const std::string json(std::istreambuf_iterator<char>(in), {});
+    return MidiInChannelFromOptions(json);
 }
 
 } // namespace champi

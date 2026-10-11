@@ -7,7 +7,6 @@
 
 #include <chrono>
 
-#include "card_slot.h"
 #include "daisycola/host.h"
 #include "mp2722.h"
 #include "panel_layout.h"
@@ -36,7 +35,7 @@ struct Hit
         kLineIn,
         kPhones,
         kUsb,    // the USB socket: power, and the battery behind it
-        kSdCard, // the SD slot
+        kSdCard, // the SD slot: Insert card, which the window handles
     };
     Kind kind  = Kind::kNone;
     int  index = 0; // KEYn or ENCn, numbered from 1
@@ -126,7 +125,7 @@ constexpr uint32_t kBatteryStepMv = 100;
  *   until release, and dragging then turns it while pushed.
  * - The toggle switch, the line-in jack and the headphone jack flip with a click.
  * - A click on the USB socket plugs or unplugs USB power; the wheel over it sets the battery
- *   voltage, full at 4.2 V. A click on the SD slot pulls the card out or puts it back.
+ *   voltage, full at 4.2 V. A click on the SD slot is the window's: it opens Insert card.
  *
  * Times come from the caller, so it can be driven without a clock.
  */
@@ -142,12 +141,12 @@ class MouseControl
     static constexpr auto kHoldToPush = std::chrono::milliseconds(300);
     static constexpr auto kClickPush  = std::chrono::milliseconds(80);
 
-    MouseControl(PanelState& panel, Mp2722& charger, CardSlot& card)
-        : panel_(panel), charger_(charger), card_(card)
+    MouseControl(PanelState& panel, Mp2722& charger) : panel_(panel), charger_(charger)
     {
     }
 
-    /** The left button went down. Returns false if it wasn't over anything. */
+    /** The left button went down. Returns false if it wasn't over anything it plays: the SD
+     *  slot opens Insert card, which is the window's. */
     bool Press(float x, float y, Clock::time_point now);
     void Move(float x, float y, Clock::time_point now);
     void Release(Clock::time_point now);
@@ -169,7 +168,6 @@ class MouseControl
 
     PanelState& panel_;
     Mp2722&     charger_;
-    CardSlot&   card_;
     int         turned_[kNumEncoders] = {};
     int         key_                  = 0; // the key held down, if any
     float       scroll_               = 0; // wheel detents not yet whole

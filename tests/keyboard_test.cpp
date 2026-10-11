@@ -103,7 +103,7 @@ TEST(DefaultKeymap, TrackerStyleTwoOctaves)
     EXPECT_EQ(m.Lookup(KEY_GRAVE), (Action{Kind::kToggle, 0}));
     EXPECT_EQ(m.Lookup(KEY_F12), (Action{Kind::kLineIn, 0}));
     EXPECT_EQ(m.Lookup(KEY_F11), (Action{Kind::kPhones, 0}));
-    EXPECT_EQ(m.Lookup(KEY_F9), (Action{Kind::kSdCard, 0}));
+    EXPECT_EQ(m.Lookup(KEY_F9), (Action{Kind::kInsertCard, 0}));
     EXPECT_EQ(m.Lookup(KEY_F10), (Action{Kind::kUsb, 0}));
     EXPECT_EQ(m.Lookup(KEY_BACKSLASH), (Action{Kind::kPush, 0}));
     EXPECT_EQ(m.KeysFor({Kind::kConnections, 0}), std::vector<Scancode>{KEY_F8});
@@ -136,7 +136,7 @@ TEST(DefaultKeymap, EveryActionHasAKey)
     for(int e = 1; e <= champi::kNumEncoders; e++)
         EXPECT_FALSE(m.KeysFor(Select(e)).empty()) << "ENC" << e;
     for(Kind kind : {Kind::kTurnLeft, Kind::kTurnRight, Kind::kPush, Kind::kToggle, Kind::kLineIn, Kind::kPhones,
-                     Kind::kUsb, Kind::kSdCard, Kind::kConnections})
+                     Kind::kUsb, Kind::kInsertCard, Kind::kConnections})
         EXPECT_FALSE(m.KeysFor({kind, 0}).empty()) << champi::ActionName({kind, 0});
 }
 
@@ -156,6 +156,19 @@ TEST(KeymapToml, OverridesOnlyWhatItNames)
     EXPECT_EQ(m.Lookup(KEY_LEFT), Action{});
     EXPECT_TRUE(m.KeysFor({Kind::kLineIn, 0}).empty());
     EXPECT_EQ(m.Lookup(KEY_Z), Key(1)); // untouched
+}
+
+TEST(KeymapToml, TheOldSdCardNameStillLoads)
+{
+    Keymap m = Keymap::Defaults();
+    m.Apply("sd_card = \"F7\"\n");
+    EXPECT_EQ(m.Lookup(KEY_F7), (Action{Kind::kInsertCard, 0}));
+    EXPECT_EQ(m.Lookup(KEY_F9), Action{}) << "the action lost its default key, as under its new name";
+    EXPECT_EQ(champi::ActionName({Kind::kInsertCard, 0}), "insert_card");
+    EXPECT_NE(m.ToToml().find("insert_card = \"F7\""), std::string::npos) << m.ToToml();
+
+    Keymap both = Keymap::Defaults();
+    EXPECT_THROW(both.Apply("insert_card = \"F7\"\nsd_card = \"F6\"\n"), std::runtime_error);
 }
 
 TEST(KeymapToml, AKeyLeavesWhatItDidBefore)
@@ -217,7 +230,7 @@ class PanelKeyboard : public ::testing::Test
 
     void SetUp() override
     {
-        keys_ = std::make_unique<KeyboardControl>(panel_, charger_, card_, Keymap::Defaults());
+        keys_ = std::make_unique<KeyboardControl>(panel_, charger_, Keymap::Defaults());
     }
 
     void TearDown() override
@@ -234,14 +247,12 @@ class PanelKeyboard : public ::testing::Test
         panel_.SetLineIn(false);
         panel_.SetPhones(false);
         charger_.SetUsbPower(true);
-        card_.SetInserted(true);
     }
 
     Clock::time_point At(int ms) const { return t0_ + std::chrono::milliseconds(ms); }
 
     static champi::PanelState        panel_;
     champi::Mp2722                   charger_;
-    champi::CardSlot                 card_;
     std::unique_ptr<KeyboardControl> keys_;
     const Clock::time_point          t0_ = Clock::now();
 };
@@ -276,7 +287,7 @@ TEST_F(PanelKeyboard, ChordsAndTwoKeysOnOnePanelKey)
 
     Keymap m = Keymap::Defaults();
     m.Apply("key_1 = [\"Z\", \"A\"]");
-    KeyboardControl two(panel_, charger_, card_, m);
+    KeyboardControl two(panel_, charger_, m);
     two.Press(KEY_Z, At(0));
     two.Press(KEY_A, At(10));
     two.Release(KEY_Z);
@@ -428,7 +439,7 @@ TEST_F(PanelKeyboard, ToggleAndTheJacksFlipOnAPress)
     EXPECT_FALSE(panel_.Phones());
 }
 
-TEST_F(PanelKeyboard, UsbAndTheSdCardFlipOnAPress)
+TEST_F(PanelKeyboard, UsbFlipsOnAPress)
 {
     ASSERT_TRUE(charger_.UsbPower());
     keys_->Press(KEY_F10, At(0));
@@ -437,14 +448,14 @@ TEST_F(PanelKeyboard, UsbAndTheSdCardFlipOnAPress)
     keys_->Press(KEY_F10, At(100));
     EXPECT_TRUE(charger_.UsbPower());
     keys_->Release(KEY_F10);
+}
 
-    ASSERT_TRUE(card_.Inserted());
-    keys_->Press(KEY_F9, At(200));
-    EXPECT_FALSE(card_.Inserted());
-    keys_->Release(KEY_F9);
-    keys_->Press(KEY_F9, At(300));
-    EXPECT_TRUE(card_.Inserted());
-    keys_->Release(KEY_F9);
+TEST_F(PanelKeyboard, F9OpensInsertCardInTheWindow)
+{
+    // Like the connections key, it isn't the panel's: the window opens Insert card.
+    EXPECT_EQ(keys_->keymap().Lookup(KEY_F9), (Action{Kind::kInsertCard, 0}));
+    EXPECT_FALSE(keys_->Press(KEY_F9, At(0)));
+    EXPECT_FALSE(keys_->Release(KEY_F9));
 }
 
 TEST_F(PanelKeyboard, LosingFocusLetsGoOfEverything)

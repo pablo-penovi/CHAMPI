@@ -1,10 +1,10 @@
-// The virtual SD card: creating, seeding, importing and exporting.
+// The virtual SD card: where cards live, creating one from the factory card, and restoring the
+// factory files.
 #include <algorithm>
 #include <cstdlib>
 #include <gtest/gtest.h>
-#include <sys/stat.h>
 
-#include "daisycola/host.h"
+#include "card_check.h"
 #include "sd_card.h"
 #include "test_util.h"
 
@@ -13,13 +13,11 @@ using namespace champi;
 
 namespace
 {
-constexpr uint64_t kMiB = 1024 * 1024;
-
-std::vector<std::string> SortedNames(const std::vector<daisycola::SdEntry>& entries)
+std::vector<std::string> SortedNames(const fs::path& dir)
 {
     std::vector<std::string> names;
-    for(const auto& e : entries)
-        names.push_back(e.name);
+    for(const auto& e : fs::directory_iterator(dir))
+        names.push_back(e.path().filename().string());
     std::sort(names.begin(), names.end());
     return names;
 }
@@ -28,140 +26,121 @@ std::vector<std::string> SortedNames(const std::vector<daisycola::SdEntry>& entr
 fs::path MakeProfile(const TempDir& dir)
 {
     const fs::path profile = dir / "profile";
-    WriteHostFile(profile / "options.json", "{\"midi_ch_in\": 1}");
+    WriteHostFile(profile / "options.json", "{\"chompi\": []}");
     WriteHostFile(profile / "presets.json", "[]");
     WriteHostFile(profile / "jammi_a1.wav", std::string(5000, 'w'));
+    WriteHostFile(profile / "FIRMWARE.bin", "bin");
     return profile;
 }
 
+// Sets an environment variable for the life of the object, then puts it back.
+class Env
+{
+  public:
+    Env(const char* name, const char* value) : name_(name)
+    {
+        const char* old = std::getenv(name);
+        had_            = old != nullptr;
+        if(had_)
+            old_ = old;
+        value ? setenv(name, value, 1) : unsetenv(name);
+    }
+    ~Env() { had_ ? setenv(name_, old_.c_str(), 1) : unsetenv(name_); }
+
+  private:
+    const char* name_;
+    bool        had_ = false;
+    std::string old_;
+};
+
 } // namespace
 
-// The chunk's "done when" test: format a full-size image, seed it with the factory card, read it
-// back, and the files match the card profile.
-TEST(SdCard, SeedsTheFactoryCard)
+TEST(SdCard, CardsDirFollowsXdg)
+{
+    {
+        Env xdg("XDG_DATA_HOME", "/xdg/data");
+        EXPECT_EQ(CardsDir(), fs::path("/xdg/data/champi/cards"));
+        EXPECT_EQ(DefaultCardDir(), fs::path("/xdg/data/champi/cards/default"));
+    }
+    Env xdg("XDG_DATA_HOME", nullptr);
+    Env home("HOME", "/home/someone");
+    EXPECT_EQ(CardsDir(), fs::path("/home/someone/.local/share/champi/cards"));
+    EXPECT_EQ(DefaultCardDir(), fs::path("/home/someone/.local/share/champi/cards/default"));
+    {
+        Env no_home("HOME", nullptr);
+        EXPECT_THROW(CardsDir(), std::runtime_error);
+    }
+}
+
+TEST(SdCard, CreatesACardFromTheFactoryCard)
 {
     TempDir        dir;
-    const fs::path image   = dir / "sdcard.img";
     const fs::path factory = FactoryCardDir();
     ASSERT_TRUE(fs::is_directory(factory)) << factory;
 
-    CreateCard(image, factory);
-    EXPECT_EQ(fs::file_size(image), kSdImageSize);
-    EXPECT_FALSE(fs::exists(dir / "sdcard.img.new"));
+    const fs::path card = dir / "cards/new card"; // the parent is made too
+    CreateCard(card, factory);
+    EXPECT_EQ(SortedNames(card), SortedNames(factory));
+    EXPECT_EQ(ReadHostFile(card / "presets.json"), ReadHostFile(factory / "presets.json"));
+    EXPECT_EQ(CheckCard(card), std::vector<CardProblem>{}) << "the factory card passes the check";
 
-    // Sparse: only the formatted structures and the card's data use disk space.
-    struct stat st = {};
-    ASSERT_EQ(stat(image.c_str(), &st), 0);
-    EXPECT_LT(uint64_t(st.st_blocks) * 512, 1024 * kMiB);
+    // An empty folder is fine too.
+    fs::create_directories(dir / "empty");
+    CreateCard(dir / "empty", factory);
+    EXPECT_EQ(SortedNames(dir / "empty"), SortedNames(factory));
+}
 
-    std::vector<std::string> expected;
-    for(const auto& e : fs::directory_iterator(factory))
-        expected.push_back(e.path().filename().string());
-    std::sort(expected.begin(), expected.end());
+TEST(SdCard, CreateRefusesAFolderThatIsntEmpty)
+{
+    TempDir        dir;
+    const fs::path profile = MakeProfile(dir);
+    WriteHostFile(dir / "taken/notes.txt", "mine");
 
-    daisycola::SdOpenImage(image.string());
-    const auto listed = daisycola::SdList("/");
-    for(const auto& e : listed)
+    try
     {
-        EXPECT_FALSE(e.is_dir) << e.name;
-        EXPECT_EQ(e.size, fs::file_size(factory / e.name)) << e.name;
+        CreateCard(dir / "taken", profile);
+        FAIL() << "a folder with files in it isn't a new card";
     }
-    EXPECT_EQ(SortedNames(listed), expected);
-    const auto presets = daisycola::SdReadFile("/presets.json");
-    EXPECT_EQ(std::string(presets.begin(), presets.end()), ReadHostFile(factory / "presets.json"));
-    daisycola::SdCloseImage();
+    catch(const std::runtime_error& e)
+    {
+        EXPECT_NE(std::string(e.what()).find("already exists"), std::string::npos) << e.what();
+    }
+    EXPECT_EQ(SortedNames(dir / "taken"), (std::vector<std::string>{"notes.txt"})) << "left as it was";
 
-    ExportFromCard(image, dir / "out");
-    for(const auto& name : expected)
-        EXPECT_TRUE(ReadHostFile(dir / "out" / name) == ReadHostFile(factory / name)) << name;
+    WriteHostFile(dir / "a file", "x");
+    EXPECT_THROW(CreateCard(dir / "a file", profile), std::runtime_error);
+    EXPECT_THROW(CreateCard(dir / "card", dir / "missing"), std::runtime_error);
+    EXPECT_FALSE(fs::exists(dir / "card")) << "nothing made from a missing profile";
 }
 
-TEST(SdCard, EnsureCardCreatesOnlyOnce)
+TEST(SdCard, RestoreFactoryFilesTouchesFactoryNamesOnly)
 {
     TempDir        dir;
-    const fs::path image = dir / "data/champi/sdcard.img";
+    const fs::path profile = MakeProfile(dir);
+    const fs::path card    = dir / "card";
+    WriteHostFile(card / "jammi_a1.wav", "my own sample");
+    WriteHostFile(card / "OPTIONS.JSON", "{}"); // the same file as options.json on FAT
+    WriteHostFile(card / "cubbi_b2.wav", "mine too");
+    WriteHostFile(card / "presets.json", "[1]");
 
-    EXPECT_TRUE(EnsureCard(image, MakeProfile(dir)));
-    ASSERT_TRUE(fs::exists(image));
+    RestoreFactoryFiles(card, profile);
+    EXPECT_EQ(SortedNames(card), (std::vector<std::string>{"FIRMWARE.bin", "cubbi_b2.wav", "jammi_a1.wav",
+                                                           "options.json", "presets.json"}));
+    EXPECT_EQ(ReadHostFile(card / "jammi_a1.wav"), std::string(5000, 'w'));
+    EXPECT_EQ(ReadHostFile(card / "options.json"), "{\"chompi\": []}");
+    EXPECT_EQ(ReadHostFile(card / "presets.json"), "[]");
+    EXPECT_EQ(ReadHostFile(card / "cubbi_b2.wav"), "mine too") << "not a factory name";
 
-    WriteHostFile(dir / "extra.txt", "kept");
-    ImportToCard(image, dir / "extra.txt");
-    EXPECT_FALSE(EnsureCard(image, dir / "profile"));
-
-    daisycola::SdOpenImage(image.string());
-    EXPECT_EQ(SortedNames(daisycola::SdList("/")),
-              (std::vector<std::string>{"extra.txt", "jammi_a1.wav", "options.json", "presets.json"}));
-    daisycola::SdCloseImage();
+    EXPECT_THROW(RestoreFactoryFiles(dir / "missing", profile), std::runtime_error);
 }
 
-TEST(SdCard, ImportsAndExportsDirectories)
+TEST(SdCard, FindsCardFilesWithoutRegardToCase)
 {
-    TempDir        dir;
-    const fs::path image = dir / "sdcard.img";
-    CreateCard(image, MakeProfile(dir), 64 * kMiB);
-
-    // A directory's contents land in the card root, overwriting what is there.
-    WriteHostFile(dir / "in/presets.json", "[1]");
-    WriteHostFile(dir / "in/samples/cubbi_b2.wav", std::string(3000, 'c'));
-    ImportToCard(image, dir / "in");
-
-    ExportFromCard(image, dir / "out");
-    EXPECT_EQ(ReadHostFile(dir / "out/presets.json"), "[1]");
-    EXPECT_EQ(ReadHostFile(dir / "out/samples/cubbi_b2.wav"), std::string(3000, 'c'));
-    EXPECT_EQ(ReadHostFile(dir / "out/options.json"), "{\"midi_ch_in\": 1}");
-}
-
-TEST(SdCard, ResetReplacesTheCard)
-{
-    TempDir        dir;
-    const fs::path image = dir / "sdcard.img";
-    CreateCard(image, MakeProfile(dir), 64 * kMiB);
-    WriteHostFile(dir / "extra.txt", "gone after reset");
-    ImportToCard(image, dir / "extra.txt");
-
-    CreateCard(image, dir / "profile", 64 * kMiB);
-    daisycola::SdOpenImage(image.string());
-    EXPECT_EQ(SortedNames(daisycola::SdList("/")),
-              (std::vector<std::string>{"jammi_a1.wav", "options.json", "presets.json"}));
-    daisycola::SdCloseImage();
-}
-
-TEST(SdCard, FailedCreateKeepsTheOldCard)
-{
-    TempDir        dir;
-    const fs::path image = dir / "sdcard.img";
-    CreateCard(image, MakeProfile(dir), 64 * kMiB);
-    const std::string before = ReadHostFile(image);
-
-    // A profile that doesn't fit on the card. The file is sparse, so this is cheap.
-    fs::create_directories(dir / "big");
-    std::ofstream(dir / "big/huge.wav");
-    fs::resize_file(dir / "big/huge.wav", 80 * kMiB);
-
-    EXPECT_THROW(CreateCard(image, dir / "big", 64 * kMiB), daisycola::SdError);
-    EXPECT_FALSE(fs::exists(dir / "sdcard.img.new"));
-    EXPECT_TRUE(ReadHostFile(image) == before);
-
-    EXPECT_THROW(CreateCard(image, dir / "missing"), std::runtime_error);
-    EXPECT_THROW(ImportToCard(image, dir / "missing"), std::runtime_error);
-}
-
-TEST(SdCard, DefaultPathFollowsXdg)
-{
-    const char*       old_xdg  = std::getenv("XDG_DATA_HOME");
-    const std::string saved    = old_xdg ? old_xdg : "";
-    const char*       old_home = std::getenv("HOME");
-    const std::string home     = old_home ? old_home : "";
-
-    setenv("XDG_DATA_HOME", "/xdg/data", 1);
-    EXPECT_EQ(DefaultSdImagePath(), fs::path("/xdg/data/champi/sdcard.img"));
-    unsetenv("XDG_DATA_HOME");
-    setenv("HOME", "/home/someone", 1);
-    EXPECT_EQ(DefaultSdImagePath(), fs::path("/home/someone/.local/share/champi/sdcard.img"));
-
-    setenv("HOME", home.c_str(), 1);
-    if(old_xdg)
-        setenv("XDG_DATA_HOME", saved.c_str(), 1);
+    TempDir dir;
+    WriteHostFile(dir / "Options.JSON", "{}");
+    EXPECT_EQ(FindCardFile(dir.path(), "options.json"), dir / "Options.JSON");
+    EXPECT_EQ(FindCardFile(dir.path(), "presets.json"), fs::path());
+    EXPECT_EQ(FindCardFile(dir / "missing", "options.json"), fs::path());
 }
 
 TEST(SdCard, ReadsTapesMidiInChannelFromItsOptions)
@@ -178,4 +157,10 @@ TEST(SdCard, ReadsTapesMidiInChannelFromItsOptions)
     EXPECT_EQ(champi::MidiInChannelFromOptions(R"([{"name": "Midi In Channel", "value": 17}])"), 0);
     EXPECT_EQ(champi::MidiInChannelFromOptions(R"([{"name": "Midi In Channel", "value": 16}])"), 15);
     EXPECT_EQ(champi::MidiInChannelFromOptions(""), 0);
+
+    // From the card's own file, whatever its case; none is channel 1.
+    TempDir dir;
+    EXPECT_EQ(MidiInChannelOfCard(dir.path()), 0);
+    WriteHostFile(dir / "OPTIONS.json", ten);
+    EXPECT_EQ(MidiInChannelOfCard(dir.path()), 9);
 }

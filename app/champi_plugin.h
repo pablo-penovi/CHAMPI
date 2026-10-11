@@ -1,7 +1,8 @@
 // The DPF side of CHAMPI: the firmware's audio and MIDI on the host's ports.
 //
-// The firmware runs once per process (see Runtime), so there is one ChampiPlugin per process too.
-// It starts TAPE on daisycola's host audio clock and drives it from run(): host MIDI goes through
+// There is one Runtime per process, so there is one ChampiPlugin per process too. It starts TAPE
+// on daisycola's host audio clock and drives it from run(), through every power cycle the UI
+// runs to insert a card (audio is silent and MIDI goes nowhere meanwhile): host MIDI goes through
 // the MIDI controller mapping to the panel or into the virtual TRS port, the firmware's MIDI comes
 // back out, and audio goes through HostAudio.
 #pragma once

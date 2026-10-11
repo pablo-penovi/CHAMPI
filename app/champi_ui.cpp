@@ -6,6 +6,10 @@
 // the panel shows it. While it's open the panel takes no input, though MIDI still plays it. The
 // menu's MIDI controller mapping is saved from here and played by the plugin (MidiMapper).
 //
+// The Insert card key (F9) or a click on the SD slot opens Insert card (InsertCard), with its own
+// folder picker (FolderPicker), and power-cycles TAPE with the card chosen. Without a card in,
+// that's all the panel does.
+//
 // Drawing is in panel millimetres; the panel is scaled to fit the window, with the status line
 // underneath. A skin folder can replace the logo and the glyphs on the CHOMPI, play and loop keys
 // with PNGs (see Skin below); none are shipped.
@@ -23,11 +27,14 @@
 #include "app.h"
 #include "champi_plugin.h"
 #include "connections_menu.h"
+#include "folder_picker.h"
+#include "insert_card.h"
 #include "keyboard.h"
 #include "led_frame.h"
 #include "midi_map.h"
 #include "panel.h"
 #include "runtime.h"
+#include "sd_card.h"
 
 START_NAMESPACE_DISTRHO
 
@@ -106,10 +113,11 @@ class ChampiUI : public UI
   public:
     ChampiUI()
         : UI(DISTRHO_UI_DEFAULT_WIDTH, DISTRHO_UI_DEFAULT_HEIGHT),
-          mouse_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger(), champi::Runtime::Get().Card()),
-          keyboard_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger(), champi::Runtime::Get().Card(),
-                    champi::Options().keymap),
-          test_mode_hold_(champi::Options().test_mode)
+          mouse_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger()),
+          keyboard_(champi::Runtime::Get().Panel(), champi::Runtime::Get().Charger(), champi::Options().keymap),
+          test_mode_hold_(champi::Options().test_mode),
+          cards_(*this),
+          insert_(picker_, cards_, StartFolder(), champi::FactoryCardDir())
     {
         loadSharedResources();
         setGeometryConstraints(DISTRHO_UI_DEFAULT_WIDTH / 2, DISTRHO_UI_DEFAULT_HEIGHT / 2, true);
@@ -118,6 +126,7 @@ class ChampiUI : public UI
         getWindow().setIgnoringKeyRepeat(true);
         menu_.SetLevels(champi::Options().audio_levels);
         menu_.Mapping().SetMappings(champi::Options().midi_mappings);
+        insert_.ShowStartup(champi::Options().skipped_cards, champi::Options().card_dir);
     }
 
   protected:
@@ -134,6 +143,14 @@ class ChampiUI : public UI
         }
         mouse_.Tick(std::chrono::steady_clock::now());
         keyboard_.Tick(std::chrono::steady_clock::now());
+        if(insert_.GetStage() == Stage::kPick)
+            picker_.Tick(std::chrono::steady_clock::now());
+        // "Inserting…" is on screen once a frame has been drawn; then the power cycle runs.
+        if(insert_.GetStage() == Stage::kInserting && inserting_shown_)
+        {
+            insert_.Insert();
+            inserting_shown_ = false;
+        }
         if(champi::RoutingService* routing = champi::Options().routing)
             if(auto snapshot = routing->SnapshotIfNewer(routing_version_))
             {
@@ -199,12 +216,35 @@ class ChampiUI : public UI
             scale(v.scale, v.scale);
             DrawMenu();
         }
+        if(insert_.IsOpen())
+        {
+            resetTransform();
+            beginPath();
+            rect(0, 0, getWidth(), getHeight());
+            fillColor(Color(0, 0, 0, 0.6f));
+            fill();
+            translate(v.x, v.y);
+            scale(v.scale, v.scale);
+            DrawInsertCard();
+            if(insert_.GetStage() == Stage::kInserting)
+                inserting_shown_ = true;
+        }
     }
 
     bool onMouse(const MouseEvent& ev) override
     {
         if(ev.button != 1)
             return false;
+        if(insert_.IsOpen())
+        {
+            if(ev.press)
+            {
+                float x, y;
+                Fit().ToPanel(ev.pos, x, y);
+                InsertCardClick(x, y);
+            }
+            return true;
+        }
         if(menu_open_)
         {
             if(ev.press && MenuReady())
@@ -225,21 +265,38 @@ class ChampiUI : public UI
         }
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
-        return mouse_.Press(x, y, now);
+        if(champi::HitTest(x, y).kind == champi::Hit::Kind::kSdCard)
+        {
+            OpenInsertCard();
+            return true;
+        }
+        // Without a card TAPE isn't running, and the panel only inserts one.
+        return champi::Runtime::Get().Running() && mouse_.Press(x, y, now);
     }
 
     bool onMotion(const MotionEvent& ev) override
     {
-        if(menu_open_)
-            return true;
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
+        over_status_ = y > layout::kHeight;
+        if(menu_open_ || insert_.IsOpen())
+            return true;
         mouse_.Move(x, y, std::chrono::steady_clock::now());
         return false;
     }
 
     bool onScroll(const ScrollEvent& ev) override
     {
+        if(insert_.IsOpen())
+        {
+            const float steps = float(ev.delta.getY());
+            const int   lines = steps > 0 ? -1 : steps < 0 ? 1 : 0;
+            if(insert_.GetStage() == Stage::kPick)
+                picker_.Scroll(lines);
+            else if(insert_.GetStage() == Stage::kReport)
+                ScrollReport(lines);
+            return true;
+        }
         if(menu_open_)
         {
             const float steps = float(ev.delta.getY());
@@ -248,14 +305,27 @@ class ChampiUI : public UI
         }
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
-        return mouse_.Scroll(x, y, float(ev.delta.getY()), std::chrono::steady_clock::now());
+        return champi::Runtime::Get().Running()
+               && mouse_.Scroll(x, y, float(ev.delta.getY()), std::chrono::steady_clock::now());
     }
 
     bool onKeyboard(const KeyboardEvent& ev) override
     {
         // On X11 a keycode is the evdev scancode plus 8: the physical key, whatever the layout.
         const champi::Scancode code = champi::Scancode(ev.keycode) - 8;
-        if(ev.press && keyboard_.keymap().Lookup(code).kind == champi::Action::Kind::kConnections)
+        const auto             kind = keyboard_.keymap().Lookup(code).kind;
+        if(insert_.IsOpen())
+        {
+            if(ev.press)
+                InsertCardKey(code, (ev.mod & kModifierControl) != 0, kind);
+            return true;
+        }
+        if(ev.press && kind == champi::Action::Kind::kInsertCard)
+        {
+            OpenInsertCard();
+            return true;
+        }
+        if(ev.press && kind == champi::Action::Kind::kConnections)
         {
             menu_open_ ? CloseMenu() : OpenMenu();
             return true;
@@ -271,8 +341,18 @@ class ChampiUI : public UI
             return true;
         }
         if(ev.press)
-            return keyboard_.Press(code, std::chrono::steady_clock::now());
+            return champi::Runtime::Get().Running() && keyboard_.Press(code, std::chrono::steady_clock::now());
         return keyboard_.Release(code);
+    }
+
+    // Typed text goes to the folder picker's fields.
+    bool onCharacterInput(const CharacterInputEvent& ev) override
+    {
+        if(insert_.GetStage() != Stage::kPick)
+            return false;
+        if(!(ev.mod & (kModifierControl | kModifierAlt | kModifierSuper)))
+            PickerResult(picker_.Text(ev.string));
+        return true;
     }
 
     // Keys held when the window loses focus never get their release.
@@ -312,6 +392,211 @@ class ChampiUI : public UI
     }
 
     void CloseMenu() { menu_open_ = false; }
+
+    // ---- Insert card ---------------------------------------------------------------------------
+
+    using Stage = champi::InsertCard::Stage;
+
+    // The card that's in, card.toml and the power cycle, for InsertCard.
+    class Cards : public champi::InsertCard::Cards
+    {
+      public:
+        explicit Cards(ChampiUI& ui) : ui_(ui)
+        {
+            const auto& path = champi::Options().card_settings_path;
+            if(!path.empty())
+                try
+                {
+                    settings_ = champi::CardSettings::Load(path);
+                }
+                catch(const std::exception&)
+                {
+                    // main already said so; Remember writes a good one.
+                }
+        }
+
+        std::filesystem::path Current() const override { return champi::Runtime::Get().Card(); }
+        std::filesystem::path Previous() const override { return settings_.previous; }
+
+        void Remember(const std::filesystem::path& current, const std::filesystem::path& previous) override
+        {
+            settings_ = {current, previous};
+            const auto& path = champi::Options().card_settings_path;
+            if(path.empty())
+                return; // --sd-dir: this run's card only
+            try
+            {
+                settings_.Save(path);
+            }
+            catch(const std::exception& e)
+            {
+                std::fprintf(stderr, "champi: can't save the card in use: %s\n", e.what());
+                throw;
+            }
+        }
+
+        std::vector<champi::CardProblem> PowerCycle(const std::filesystem::path& card,
+                                                    const std::filesystem::path& fallback) override
+        {
+            std::vector<champi::CardProblem> problems = champi::Runtime::Get().PowerCycle(card, fallback);
+            ui_.Plugin().MidiMap().SetFirmwareChannel(champi::Runtime::Get().MidiInChannel());
+            return problems;
+        }
+
+      private:
+        ChampiUI&            ui_;
+        champi::CardSettings settings_;
+    };
+
+    // The cards folder, where the picker starts; "/" if there's no home to find it in.
+    static std::filesystem::path StartFolder()
+    {
+        try
+        {
+            return champi::CardsDir();
+        }
+        catch(const std::exception&)
+        {
+            return "/";
+        }
+    }
+
+    // Where the smaller dialogs sit, and their buttons.
+    static constexpr layout::Rect kDialog{63, 18, 200, 70};
+    static constexpr float        kDialogPad = 5;
+    static constexpr layout::Rect kOkButton{kDialog.x + kDialog.w - kDialogPad - 34, kDialog.y + kDialog.h - kDialogPad - 8,
+                                            34, 8};
+    static constexpr layout::Rect kCancelButton{kOkButton.x - 38, kOkButton.y, 34, 8};
+    static constexpr layout::Rect kReportBox = champi::ConnectionsMenu::kBox;
+    static constexpr layout::Rect kReportOk{kReportBox.x + kReportBox.w - 4 - 34, kReportBox.y + kReportBox.h - 4 - 8, 34, 8};
+
+    static layout::Rect ChoiceRect(int i) { return {kDialog.x + kDialogPad, kDialog.y + 30 + i * 11, kDialog.w - 2 * kDialogPad, 9}; }
+
+    static bool Inside(const layout::Rect& r, float x, float y)
+    {
+        return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+    }
+
+    // The panel lets go of everything it holds, and the connections menu closes.
+    void OpenInsertCard()
+    {
+        keyboard_.ReleaseAll();
+        mouse_.Cancel();
+        CloseMenu();
+        insert_.Open();
+    }
+
+    void PickerResult(const champi::FolderPicker::Result& result)
+    {
+        using Kind = champi::FolderPicker::Result::Kind;
+        if(result.kind == Kind::kCancelled)
+            insert_.PickCancelled();
+        else if(result.kind == Kind::kChosen)
+        {
+            const std::string error = insert_.Picked(result.path);
+            if(!error.empty())
+                picker_.SetError(error);
+        }
+        report_scroll_ = 0;
+    }
+
+    void InsertCardKey(champi::Scancode code, bool ctrl, champi::Action::Kind kind)
+    {
+        const bool enter = code == KEY_ENTER || code == KEY_KPENTER;
+        switch(insert_.GetStage())
+        {
+            case Stage::kChoose:
+                if(code == KEY_UP || code == KEY_DOWN)
+                    insert_.Move(code == KEY_UP ? -1 : 1);
+                else if(enter || code == KEY_SPACE)
+                    insert_.Choose(insert_.Selected());
+                else if(code == KEY_ESC || code == KEY_BACKSPACE || kind == champi::Action::Kind::kInsertCard)
+                    insert_.Close();
+                break;
+            case Stage::kPick:
+                if(ctrl && code == KEY_V)
+                {
+                    size_t      size = 0;
+                    const void* data = getWindow().getClipboard(size);
+                    if(data && size)
+                        PickerResult(picker_.Text(std::string(static_cast<const char*>(data), size)));
+                }
+                else
+                    PickerResult(picker_.Key(code, ctrl));
+                break;
+            case Stage::kReport:
+                if(code == KEY_UP || code == KEY_DOWN)
+                    ScrollReport(code == KEY_UP ? -1 : 1);
+                else if(code == KEY_PAGEUP || code == KEY_PAGEDOWN)
+                    ScrollReport(code == KEY_PAGEUP ? -10 : 10);
+                else if(enter || code == KEY_ESC || code == KEY_SPACE || kind == champi::Action::Kind::kInsertCard)
+                    insert_.Close();
+                break;
+            case Stage::kConfirm:
+                if(enter)
+                    insert_.Confirm();
+                else if(code == KEY_ESC)
+                    insert_.Close();
+                break;
+            case Stage::kFailed:
+                if(enter)
+                    getWindow().close();
+                else if(code == KEY_ESC)
+                    insert_.Close();
+                break;
+            case Stage::kInserting:
+            case Stage::kClosed: break;
+        }
+    }
+
+    void InsertCardClick(float x, float y)
+    {
+        using Choice = champi::InsertCard::Choice;
+        switch(insert_.GetStage())
+        {
+            case Stage::kChoose:
+                for(int i = 0; i < champi::InsertCard::kNumChoices; i++)
+                    if(Inside(ChoiceRect(i), x, y))
+                        return insert_.Choose(Choice(i));
+                if(!Inside(kDialog, x, y))
+                    insert_.Close();
+                break;
+            case Stage::kPick: PickerResult(picker_.Click(x, y, std::chrono::steady_clock::now())); break;
+            case Stage::kReport:
+                if(Inside(kReportOk, x, y) || !Inside(kReportBox, x, y))
+                    insert_.Close();
+                break;
+            case Stage::kConfirm:
+                if(Inside(kOkButton, x, y))
+                    insert_.Confirm();
+                else if(Inside(kCancelButton, x, y) || !Inside(kDialog, x, y))
+                    insert_.Close();
+                break;
+            case Stage::kFailed:
+                if(Inside(kOkButton, x, y))
+                    getWindow().close();
+                else if(Inside(kCancelButton, x, y))
+                    insert_.Close();
+                break;
+            case Stage::kInserting:
+            case Stage::kClosed: break;
+        }
+    }
+
+    void ScrollReport(int lines) { report_scroll_ = std::clamp(report_scroll_ + lines * 4.0f, 0.0f, report_max_scroll_); }
+
+    std::string InsertCardKeyName() const
+    {
+        const auto keys = keyboard_.keymap().KeysFor({champi::Action::Kind::kInsertCard, 0});
+        return keys.empty() ? "" : champi::ScancodeName(keys[0]);
+    }
+
+    static std::string CardName(const std::filesystem::path& dir)
+    {
+        const std::filesystem::path clean = dir.lexically_normal();
+        const std::string name = (clean.filename().empty() ? clean.parent_path() : clean).filename().string();
+        return name.empty() ? dir.string() : name;
+    }
 
     // Whether the menu lists CHAMPI's ports, rather than a message.
     bool MenuReady() const { return champi::Options().routing && routing_ready_; }
@@ -1252,7 +1537,7 @@ class ChampiUI : public UI
 
     // The USB socket and the SD slot face the player. They're drawn just inside the front edge,
     // over the real ones. A click on the socket plugs or unplugs USB power, the wheel over it sets
-    // the battery; a click on the slot pulls the card out or puts it back.
+    // the battery; a click on the slot opens Insert card.
     void DrawFrontEdge()
     {
         champi::Runtime& runtime = champi::Runtime::Get();
@@ -1292,7 +1577,8 @@ class ChampiUI : public UI
         roundedRect(sd.x, sd.y, sd.w, sd.h, 0.4f);
         fillColor(Color(4, 4, 4));
         fill();
-        if(runtime.Card().Inserted())
+        const bool card_in = !runtime.Card().empty();
+        if(card_in)
         {
             beginPath(); // the card's back edge, flush in the slot
             rect(sd.x + 0.8f, sd.y + 0.4f, sd.w - 1.6f, sd.h - 0.8f);
@@ -1301,27 +1587,337 @@ class ChampiUI : public UI
         }
         textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
         fillColor(kCream);
-        text(sd.x - 1.5f, sd.y + sd.h / 2, runtime.Card().Inserted() ? "SD" : "NO SD", nullptr);
+        text(sd.x - 1.5f, sd.y + sd.h / 2, card_in ? "SD" : "NO SD", nullptr);
     }
 
+    // The card and TAPE's state first, then the audio figures. Over the status line, the card's
+    // full path shows instead of its name.
     void DrawStatus()
     {
-        char status[200];
-        std::snprintf(status, sizeof status,
-                      "%s    %.0f Hz / %u%s    load %.0f%% (peak %.0f%%)    xruns %llu    late %llu    "
-                      "dropouts %llu",
-                      !champi::Runtime::Get().Card().Inserted() ? "no SD card (restart to read it again)"
-                      : champi::Runtime::Get().Booted()         ? "running"
-                                                                : "booting",
-                      getSampleRate(),
-                      Plugin().getBufferSize(), Plugin().Resampling() ? " resampled" : "",
+        champi::Runtime&            runtime = champi::Runtime::Get();
+        const std::filesystem::path card    = runtime.Card();
+        const std::string           shown   = over_status_ ? card.string() : CardName(card);
+        std::string                 state;
+        if(insert_.GetStage() == Stage::kInserting)
+            state = "Inserting " + CardName(insert_.Chosen()) + "…";
+        else if(card.empty())
+        {
+            const std::string key = InsertCardKeyName();
+            state = "no card: " + (key.empty() ? std::string("click the SD slot") : key + " or the SD slot") + " inserts one";
+        }
+        else
+            state = "card " + shown + (!runtime.Running() ? "    stopped" : runtime.Booted() ? "    running" : "    booting");
+
+        char figures[160];
+        std::snprintf(figures, sizeof figures,
+                      "    %.0f Hz / %u%s    load %.0f%% (peak %.0f%%)    xruns %llu    late %llu    dropouts %llu",
+                      getSampleRate(), Plugin().getBufferSize(), Plugin().Resampling() ? " resampled" : "",
                       load_.average * 100, load_.peak * 100, (unsigned long long)champi::g_xruns.load(),
                       (unsigned long long)load_.late_blocks, (unsigned long long)load_.dropouts);
+        const std::string status = state + (over_status_ && !card.empty() ? "" : figures);
         fontFace(NANOVG_DEJAVU_SANS_TTF);
         fontSize(2.6f);
         textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
         fillColor(kStatusText);
-        text(2, layout::kHeight + kStatusHeight / 2, status, nullptr);
+        text(2, layout::kHeight + kStatusHeight / 2, status.c_str(), nullptr);
+    }
+
+    // ---- Insert card ---------------------------------------------------------------------------
+
+    void DrawInsertCard()
+    {
+        switch(insert_.GetStage())
+        {
+            case Stage::kChoose: DrawChoose(); break;
+            case Stage::kPick: DrawPicker(); break;
+            case Stage::kReport: DrawReport(); break;
+            case Stage::kConfirm: DrawConfirm(); break;
+            case Stage::kInserting: DrawInserting(); break;
+            case Stage::kFailed: DrawFailed(); break;
+            case Stage::kClosed: break;
+        }
+    }
+
+    void DrawBox(const layout::Rect& b)
+    {
+        beginPath();
+        roundedRect(b.x, b.y, b.w, b.h, 2);
+        fillColor(kMenuBox);
+        fill();
+        strokeColor(kDarkGold);
+        strokeWidth(0.4f);
+        stroke();
+    }
+
+    void DrawTitle(const layout::Rect& b, float pad, const std::string& title, const std::string& hint)
+    {
+        fontFace(NANOVG_DEJAVU_SANS_TTF);
+        fontSize(4.2f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        fillColor(kCream);
+        text(b.x + pad, b.y + 7, title.c_str(), nullptr);
+        if(hint.empty())
+            return;
+        fontSize(2.8f);
+        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
+        fillColor(kStatusText);
+        text(b.x + b.w - pad, b.y + 7, hint.c_str(), nullptr);
+    }
+
+    // Wrapped text from x, y down, `w` wide. Returns where the next line goes.
+    float DrawText(float x, float y, float w, const std::string& s, float size, const Color& c)
+    {
+        fontSize(size);
+        textAlign(ALIGN_LEFT | ALIGN_TOP);
+        fillColor(c);
+        float bounds[4];
+        textBoxBounds(x, y, w, s.c_str(), nullptr, bounds);
+        textBox(x, y, w, s.c_str(), nullptr);
+        return bounds[3] + size * 0.35f;
+    }
+
+    void DrawButton(const layout::Rect& r, const char* label, bool primary)
+    {
+        beginPath();
+        roundedRect(r.x, r.y, r.w, r.h, 1.2f);
+        if(primary)
+        {
+            fillColor(kMenuSelected);
+            fill();
+        }
+        strokeColor(primary ? kGold : kStatusText);
+        strokeWidth(0.3f);
+        stroke();
+        fontSize(3.0f);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        fillColor(primary ? kCream : kStatusText);
+        text(r.x + r.w / 2, r.y + r.h / 2, label, nullptr);
+    }
+
+    void DrawChoose()
+    {
+        DrawBox(kDialog);
+        DrawTitle(kDialog, kDialogPad, "Insert card", "Enter chooses    Esc closes");
+        const std::filesystem::path card = champi::Runtime::Get().Card();
+        DrawText(kDialog.x + kDialogPad, kDialog.y + 14, kDialog.w - 2 * kDialogPad,
+                 card.empty() ? std::string("No card is in.") : "In now: " + card.string(), 2.9f, kStatusText);
+
+        const char* const labels[champi::InsertCard::kNumChoices] = {"Select an existing folder…", "Create a new folder…"};
+        for(int i = 0; i < champi::InsertCard::kNumChoices; i++)
+        {
+            const layout::Rect r = ChoiceRect(i);
+            if(int(insert_.Selected()) == i)
+            {
+                beginPath();
+                roundedRect(r.x, r.y, r.w, r.h, 1);
+                fillColor(kMenuSelected);
+                fill();
+            }
+            fontSize(3.4f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kCream);
+            text(r.x + 3, r.y + r.h / 2, labels[i], nullptr);
+        }
+        DrawText(kDialog.x + kDialogPad, kDialog.y + kDialog.h - 9, kDialog.w - 2 * kDialogPad,
+                 "Both start in " + StartFolder().string() + ".", 2.6f, kMenuMissing);
+    }
+
+    void DrawField(const layout::Rect& r, const champi::TextField& field, bool focused)
+    {
+        beginPath();
+        roundedRect(r.x, r.y, r.w, r.h, 1);
+        fillColor(kWell);
+        fill();
+        strokeColor(focused ? kGold : kMenuMissing);
+        strokeWidth(0.3f);
+        stroke();
+
+        // The text scrolls so the cursor stays in sight.
+        fontSize(3.2f);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        const std::string& t      = field.Text();
+        const float        inner  = r.w - 4;
+        Rectangle<float>   bounds;
+        const float        cursor = textBounds(0, 0, t.c_str(), t.c_str() + field.Cursor(), bounds);
+        const float        shift  = std::max(0.0f, cursor - inner);
+        scissor(r.x + 1, r.y, r.w - 2, r.h);
+        fillColor(kCream);
+        text(r.x + 2 - shift, r.y + r.h / 2, t.c_str(), nullptr);
+        if(focused)
+        {
+            beginPath();
+            rect(r.x + 2 - shift + cursor, r.y + 1.5f, 0.3f, r.h - 3);
+            fillColor(kCream);
+            fill();
+        }
+        resetScissor();
+    }
+
+    void DrawPicker()
+    {
+        using Picker = champi::FolderPicker;
+        using Focus  = Picker::Focus;
+        const layout::Rect& b = Picker::kBox;
+        DrawBox(b);
+        DrawTitle(b, Picker::kPad, picker_.Title(), picker_.Hint());
+        DrawField(Picker::kPathField, picker_.PathField(), picker_.GetFocus() == Focus::kPath);
+
+        const champi::FolderBrowser& browser = picker_.Browser();
+        const auto&                  entries = browser.Entries();
+        const layout::Rect&          list    = Picker::kList;
+        if(picker_.GetFocus() == Focus::kList)
+        {
+            beginPath();
+            roundedRect(list.x - 0.6f, list.y - 0.6f, list.w + 1.2f, list.h + 1.2f, 1);
+            strokeColor(kDarkGold);
+            strokeWidth(0.25f);
+            stroke();
+        }
+        scissor(list.x, list.y, list.w, list.h);
+        const int last = std::min(int(entries.size()), picker_.FirstVisible() + Picker::VisibleLines() + 1);
+        for(int i = picker_.FirstVisible(); i < last; i++)
+        {
+            const layout::Rect r = picker_.EntryRect(i);
+            if(i == browser.Selected())
+            {
+                beginPath();
+                roundedRect(r.x, r.y + 0.3f, r.w - 3, r.h - 0.6f, 1);
+                fillColor(kMenuSelected);
+                fill();
+            }
+            DrawFolderIcon(r.x + 3, r.y + r.h / 2, entries[i].up);
+            fontSize(3.2f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(entries[i].up ? kStatusText : kCream);
+            text(r.x + 7, r.y + r.h / 2, entries[i].name.c_str(), nullptr);
+        }
+        resetScissor();
+
+        // The folder's own error sits in the list; a refused choice under it.
+        float y = list.y + std::max(0, int(entries.size()) - picker_.FirstVisible()) * Picker::kLineHeight + 1;
+        if(!browser.Error().empty() && y < list.y + list.h)
+            DrawText(list.x + 7, y, list.w - 10, browser.Error(), 3.0f, kMenuMissing);
+        else if(entries.size() <= (browser.Path().has_relative_path() ? 1u : 0u))
+            DrawText(list.x + 7, y, list.w - 10, "No folders in here.", 3.0f, kMenuMissing);
+        if(int(entries.size()) > Picker::VisibleLines())
+        {
+            const int   lines = Picker::VisibleLines();
+            const float h     = list.h * lines / entries.size();
+            const float sy    = list.y + (list.h - h) * picker_.FirstVisible() / float(entries.size() - lines);
+            beginPath();
+            roundedRect(list.x + list.w - 1.2f, sy, 1.2f, h, 0.6f);
+            fillColor(kStatusText);
+            fill();
+        }
+
+        if(browser.GetMode() == champi::FolderBrowser::Mode::kCreate)
+        {
+            const layout::Rect& nf = Picker::kNameField;
+            fontSize(3.2f);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            fillColor(kStatusText);
+            text(b.x + Picker::kPad, nf.y + nf.h / 2, "Name", nullptr);
+            DrawField(nf, picker_.NameField(), picker_.GetFocus() == Focus::kName);
+        }
+        DrawButton(Picker::kButton, picker_.ButtonLabel().c_str(), picker_.GetFocus() == Focus::kButton);
+        if(!picker_.Error().empty())
+        {
+            const float ey = Picker::kBottomY - 5.5f;
+            DrawText(b.x + Picker::kPad, ey, b.w - 2 * Picker::kPad, picker_.Error(), 3.0f, Color(236, 120, 110));
+        }
+    }
+
+    void DrawFolderIcon(float x, float y, bool up)
+    {
+        if(up)
+        {
+            Arrowhead(x, y - 1.2f, -kPi / 2, kStatusText);
+            return;
+        }
+        beginPath();
+        roundedRect(x - 2, y - 1.2f, 4, 2.8f, 0.4f);
+        rect(x - 2, y - 1.8f, 1.8f, 0.8f);
+        fillColor(kGold);
+        fill();
+    }
+
+    void DrawReport()
+    {
+        const champi::InsertCard::Report& report = insert_.GetReport();
+        const layout::Rect&               b      = kReportBox;
+        constexpr float                   pad    = 4;
+        DrawBox(b);
+        DrawTitle(b, pad, report.title, "Up/Down scrolls    Enter or Esc closes");
+
+        const float top = b.y + 13, bottom = kReportOk.y - 2, w = b.w - 2 * pad - 3;
+        scissor(b.x + pad, top, b.w - 2 * pad, bottom - top);
+        float y = top - report_scroll_;
+        if(!report.text.empty())
+            y = DrawText(b.x + pad, y, w, report.text, 3.2f, kCream) + 1.5f;
+        for(const champi::SkippedCard& card : report.cards)
+        {
+            y = DrawText(b.x + pad, y, w, card.dir.string(), 3.1f, kGold) + 0.5f;
+            for(const champi::CardProblem& p : card.problems)
+            {
+                const std::string file = p.path.empty() ? std::string("the folder") : p.path.string();
+                fontSize(2.9f);
+                textAlign(ALIGN_LEFT | ALIGN_TOP);
+                fillColor(kCream);
+                text(b.x + pad + 2, y, file.c_str(), nullptr);
+                y = DrawText(b.x + pad + 50, y, w - 50, p.reason, 2.9f, kStatusText) + 0.4f;
+            }
+            y += 1.5f;
+        }
+        resetScissor();
+        report_max_scroll_ = std::max(0.0f, y + report_scroll_ - bottom);
+        if(report_max_scroll_ > 0)
+        {
+            const float h  = (bottom - top) * (bottom - top) / (bottom - top + report_max_scroll_);
+            const float sy = top + (bottom - top - h) * report_scroll_ / report_max_scroll_;
+            beginPath();
+            roundedRect(b.x + b.w - pad - 1.2f, sy, 1.2f, h, 0.6f);
+            fillColor(kStatusText);
+            fill();
+        }
+        DrawButton(kReportOk, "OK", true);
+    }
+
+    void DrawConfirm()
+    {
+        const std::filesystem::path& card = insert_.Chosen();
+        DrawBox(kDialog);
+        DrawTitle(kDialog, kDialogPad, "Insert " + CardName(card) + "?", "");
+        float y = DrawText(kDialog.x + kDialogPad, kDialog.y + 14, kDialog.w - 2 * kDialogPad, card.string(), 3.0f,
+                           kStatusText);
+        DrawText(kDialog.x + kDialogPad, y + 2, kDialog.w - 2 * kDialogPad,
+                 "TAPE restarts to read the new card, as the CHOMPI does after a power cycle. JACK connections stay "
+                 "as they are.",
+                 3.2f, kCream);
+        DrawButton(kOkButton, "Insert", true);
+        DrawButton(kCancelButton, "Cancel", false);
+    }
+
+    void DrawInserting()
+    {
+        const layout::Rect b{kDialog.x, kDialog.y + 20, kDialog.w, 24};
+        DrawBox(b);
+        fontSize(3.6f);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        fillColor(kCream);
+        const std::string label = "Inserting " + CardName(insert_.Chosen()) + "…";
+        text(b.x + b.w / 2, b.y + b.h / 2, label.c_str(), nullptr);
+    }
+
+    void DrawFailed()
+    {
+        DrawBox(kDialog);
+        DrawTitle(kDialog, kDialogPad, "TAPE couldn't restart", "");
+        const float y = DrawText(kDialog.x + kDialogPad, kDialog.y + 14, kDialog.w - 2 * kDialogPad,
+                                 insert_.Failure(), 3.0f, kStatusText);
+        DrawText(kDialog.x + kDialogPad, y + 2, kDialog.w - 2 * kDialogPad,
+                 "CHAMPI never runs firmware it couldn't restart cleanly. Quit, and start it again.", 3.2f, kCream);
+        DrawButton(kOkButton, "Quit", true);
+        DrawButton(kCancelButton, "Not now", false);
     }
 
     // ---- The connections menu ------------------------------------------------------------------
@@ -1765,6 +2361,13 @@ class ChampiUI : public UI
     uint64_t                              routing_version_ = 0;
     bool                                  routing_ready_   = false; // CHAMPI's ports are listed
     champi::Graph                         graph_; // the latest, for the controllers on MIDI in
+    champi::FolderPicker                  picker_;
+    Cards                                 cards_;
+    champi::InsertCard                    insert_;
+    bool                                  inserting_shown_   = false; // "Inserting…" has been drawn
+    bool                                  over_status_       = false; // the mouse is over the status line
+    float                                 report_scroll_     = 0;     // mm the report is scrolled by
+    float                                 report_max_scroll_ = 0;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChampiUI)
 };

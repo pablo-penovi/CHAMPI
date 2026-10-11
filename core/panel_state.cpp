@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "daisy_seed.h"
 #include "daisycola/host.h"
@@ -55,6 +56,26 @@ int CheckIndex(int n, int count, const char* what)
 
 } // namespace
 
+PanelState::Use::Use(const PanelState& panel) : panel_(panel)
+{
+    // With Detach's store and load, sequentially consistent: either Detach sees this call and
+    // waits for it, or the call sees the board detached.
+    panel_.users_.fetch_add(1);
+    attached_ = panel_.attached_.load();
+}
+
+PanelState::Use::~Use()
+{
+    panel_.users_.fetch_sub(1);
+}
+
+void PanelState::Detach()
+{
+    attached_.store(false);
+    while(users_.load() > 0)
+        std::this_thread::yield();
+}
+
 void PanelState::Attach()
 {
     button_chain_  = daisycola::AttachSr4021(seed::D8, seed::D7, seed::D9, 5, kButtonHoldReads);
@@ -69,35 +90,45 @@ void PanelState::Attach()
 
     daisycola::SetSrInputs(button_chain_, ~0ull);
     daisycola::SetPin(kEnc5Push, true);
-    SetToggle(true);
-    SetLineIn(false);
-    SetPhones(false);
+    daisycola::SetSrInput(button_chain_, kToggle, !toggle_.load());
+    daisycola::SetPin(kJackDetect, line_in_.load());
+    attached_.store(true);
 }
 
 void PanelState::SetKey(int key, bool pressed)
 {
-    daisycola::SetSrInput(button_chain_, kKeyBits[CheckIndex(key, kNumKeys, "key")], !pressed);
+    const int bit = kKeyBits[CheckIndex(key, kNumKeys, "key")];
+    if(Use use{*this})
+        daisycola::SetSrInput(button_chain_, bit, !pressed);
 }
 
 bool PanelState::KeyPressed(int key) const
 {
     const int bit = kKeyBits[CheckIndex(key, kNumKeys, "key")];
-    return !(daisycola::GetSrInputs(button_chain_) >> bit & 1);
+    const Use use{*this};
+    return use && !(daisycola::GetSrInputs(button_chain_) >> bit & 1);
 }
 
 void PanelState::TurnEncoder(int encoder, int detents)
 {
-    daisycola::QueueDetents(encoders_[CheckIndex(encoder, kNumEncoders, "encoder")], detents);
+    const int index = CheckIndex(encoder, kNumEncoders, "encoder");
+    if(Use use{*this})
+        daisycola::QueueDetents(encoders_[index], detents);
 }
 
 int PanelState::PendingDetents(int encoder) const
 {
-    return daisycola::PendingDetents(encoders_[CheckIndex(encoder, kNumEncoders, "encoder")]);
+    const int index = CheckIndex(encoder, kNumEncoders, "encoder");
+    const Use use{*this};
+    return use ? daisycola::PendingDetents(encoders_[index]) : 0;
 }
 
 void PanelState::SetEncoderPushed(int encoder, bool pushed)
 {
     const int bit = kPushBits[CheckIndex(encoder, kNumEncoders, "encoder")];
+    const Use use{*this};
+    if(!use)
+        return;
     if(bit < 0)
         daisycola::SetPin(kEnc5Push, !pushed);
     else
@@ -107,6 +138,9 @@ void PanelState::SetEncoderPushed(int encoder, bool pushed)
 bool PanelState::EncoderPushed(int encoder) const
 {
     const int bit = kPushBits[CheckIndex(encoder, kNumEncoders, "encoder")];
+    const Use use{*this};
+    if(!use)
+        return false;
     if(bit < 0)
         return !daisycola::GetPin(kEnc5Push);
     return !(daisycola::GetSrInputs(button_chain_) >> bit & 1);
@@ -114,22 +148,26 @@ bool PanelState::EncoderPushed(int encoder) const
 
 void PanelState::SetToggle(bool on)
 {
-    daisycola::SetSrInput(button_chain_, kToggle, !on);
+    toggle_.store(on);
+    if(Use use{*this})
+        daisycola::SetSrInput(button_chain_, kToggle, !on);
 }
 
 bool PanelState::Toggle() const
 {
-    return !(daisycola::GetSrInputs(button_chain_) >> kToggle & 1);
+    return toggle_.load();
 }
 
 void PanelState::SetLineIn(bool plugged)
 {
-    daisycola::SetPin(kJackDetect, plugged);
+    line_in_.store(plugged);
+    if(Use use{*this})
+        daisycola::SetPin(kJackDetect, plugged);
 }
 
 bool PanelState::LineIn() const
 {
-    return daisycola::GetPin(kJackDetect);
+    return line_in_.load();
 }
 
 } // namespace champi

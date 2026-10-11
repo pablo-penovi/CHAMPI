@@ -77,7 +77,7 @@ std::vector<Action> AllActions()
     all.push_back({K::kLineIn, 0});
     all.push_back({K::kPhones, 0});
     all.push_back({K::kUsb, 0});
-    all.push_back({K::kSdCard, 0});
+    all.push_back({K::kInsertCard, 0});
     for(int e = 1; e <= kNumEncoders; e++)
         all.push_back({K::kSelectEncoder, e});
     all.push_back({K::kTurnLeft, 0});
@@ -126,7 +126,7 @@ std::string ActionName(const Action& a)
         case K::kLineIn: return "line_in";
         case K::kPhones: return "phones";
         case K::kUsb: return "usb";
-        case K::kSdCard: return "sd_card";
+        case K::kInsertCard: return "insert_card";
         case K::kConnections: return "connections";
         case K::kNone: break;
     }
@@ -135,6 +135,8 @@ std::string ActionName(const Action& a)
 
 std::optional<Action> ActionFromName(std::string_view name)
 {
+    if(name == "sd_card") // insert_card before 1.3; drop in 2.0
+        return Action{Action::Kind::kInsertCard, 0};
     for(const Action& a : AllActions())
         if(ActionName(a) == name)
             return a;
@@ -158,7 +160,7 @@ Keymap Keymap::Defaults()
     m.Bind(KEY_SPACE, {K::kKey, kPlayKey});
     m.Bind(KEY_ENTER, {K::kKey, kLoopKey});
     m.Bind(KEY_GRAVE, {K::kToggle, 0});
-    m.Bind(KEY_F9, {K::kSdCard, 0});
+    m.Bind(KEY_F9, {K::kInsertCard, 0});
     m.Bind(KEY_F10, {K::kUsb, 0});
     m.Bind(KEY_F11, {K::kPhones, 0});
     m.Bind(KEY_F12, {K::kLineIn, 0});
@@ -189,8 +191,9 @@ void Keymap::Apply(std::string_view toml, const std::string& source)
         const auto action = ActionFromName(l.name);
         if(!action)
             TomlFail(source, l.line, "no action is called \"" + l.name + "\"");
-        if(!actions_seen.insert(l.name).second)
-            TomlFail(source, l.line, l.name + " is set twice");
+        if(!actions_seen.insert(ActionName(*action)).second)
+            TomlFail(source, l.line, ActionName(*action) + " is set twice"
+                                         + (l.name != ActionName(*action) ? " (" + l.name + " is its old name)" : ""));
         result.Unbind(*action);
         for(const TomlValue& v : l.values)
         {
@@ -284,8 +287,8 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
     if(held_.count(code))
         return true; // a repeat
     const Action action = keymap_.Lookup(code);
-    if(action.kind == K::kNone || action.kind == K::kConnections)
-        return false; // the connections key belongs to the window, not the panel
+    if(action.kind == K::kNone || action.kind == K::kConnections || action.kind == K::kInsertCard)
+        return false; // the connections and Insert card keys belong to the window, not the panel
     used_       = true;
     Held& held  = held_[code];
     held.action = action;
@@ -322,11 +325,9 @@ bool KeyboardControl::Press(Scancode code, Clock::time_point now)
         case K::kUsb:
             charger_.SetUsbPower(!charger_.UsbPower());
             break;
-        case K::kSdCard:
-            card_.SetInserted(!card_.Inserted());
-            break;
         case K::kNone:
         case K::kConnections:
+        case K::kInsertCard:
             break;
     }
     return true;

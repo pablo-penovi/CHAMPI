@@ -7,9 +7,50 @@ All notable changes to CHAMPI are listed here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-11
+
+The SD card is a folder on the host instead of a disk image. CHAMPI has no users to migrate yet, so
+the old `~/.local/share/champi/sdcard.img` is simply no longer used, and the breaking changes
+below ship in a minor release.
+
 ### Added
 
 - This changelog.
+- **Insert card**, from a click on the SD slot or `F9`: select an existing folder, or create one
+  filled from the factory card, in CHAMPI's own folder picker, which starts in
+  `~/.local/share/champi/cards/`. Inserting a card restarts TAPE, as a power cycle does on the
+  device, while the window and the JACK connections stay.
+- **A card check**: every file on a card must be one TAPE reads (samples named
+  `jammi_<bank><slot>.wav` or `cubbi_<bank><slot>.wav`, in 48 kHz 16-bit stereo PCM, `_double`
+  files next to their sample, `options.json` and `presets.json` within TAPE's limits and ranges),
+  one TAPE writes itself, a single firmware `.bin`, or macOS and Windows metadata. A card that
+  fails is refused with one line per problem saying what to fix, and the card in stays in.
+- `~/.config/champi/card.toml` remembers the card in use and the one before it. At start CHAMPI
+  takes the first that passes the check of that card, the one before, and the default card, and
+  says why it passed any over. If none passes, TAPE doesn't start and the panel only offers Insert
+  card.
+- `--sd-dir <folder>` for `champi` and `champi-headless`. Without it, `champi-headless` runs on a
+  temporary copy of the factory card, so scripted runs never write to your cards.
+- The status line shows the card in, and its full path with the mouse over it.
+
+### Changed
+
+- **Breaking:** the SD card is a folder, `~/.local/share/champi/cards/default/` to begin with,
+  created from the factory card on first start.
+- **Breaking:** `--sd-reset` restores the factory samples, `options.json`, `presets.json` and
+  firmware file on the card, leaving files you added, and needs `--yes`.
+- **Breaking:** the keymap action `sd_card` is now `insert_card`. Keymaps that use the old name
+  still load, until 2.0.
+- TAPE is built as a firmware library, `libchampi_fw_tape.so`, which ships next to the executable
+  and is loaded again on every power cycle (daisycola 0.2.0).
+- The toggle switch and the line-in plug keep their positions across a power cycle.
+
+### Removed
+
+- **Breaking:** the disk-image card, and with it `--sd-image`, `--sd-import` and `--sd-export`.
+  They now stop with a message naming what replaced them.
+- **Breaking:** pulling the SD card out: the slot click and `F9` toggle, the "no SD card" status,
+  and the `sd out|in` script command, which now stops a script with a message.
 
 ## [1.2.0] - 2026-10-10
 
@@ -116,7 +157,8 @@ The first release: the real CHOMPI TAPE 2.0 firmware, unpatched, running nativel
 - The mode switch's lever is drawn up for record mode and down for playback
   ([#13](https://github.com/pablo-penovi/CHAMPI/pull/13)).
 
-[Unreleased]: https://github.com/pablo-penovi/CHAMPI/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/pablo-penovi/CHAMPI/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/pablo-penovi/CHAMPI/releases/tag/v1.0.0

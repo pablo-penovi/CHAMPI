@@ -10,10 +10,12 @@ target_include_directories(champi_routing PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(champi_routing PRIVATE champi_warnings)
 
 # The panel's layout, hit-testing, LED look, mouse and keyboard handling, the MIDI controller
-# mapping, and the connections menu's logic: no DPF, so the tests can use it.
-add_library(champi_panel STATIC panel.cpp keyboard.cpp midi_map.cpp midi_map_menu.cpp connections_menu.cpp)
+# mapping, the connections menu's logic, and Insert card with its folder picker and card.toml: no
+# DPF, so the tests can use it.
+add_library(champi_panel STATIC panel.cpp keyboard.cpp midi_map.cpp midi_map_menu.cpp connections_menu.cpp
+    card_settings.cpp insert_card.cpp folder_picker.cpp)
 target_include_directories(champi_panel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(champi_panel PUBLIC champi_board champi_routing PRIVATE champi_warnings)
+target_link_libraries(champi_panel PUBLIC champi_board champi_routing champi_sd PRIVATE champi_warnings)
 
 dpf_add_plugin(champi
     TARGETS jack

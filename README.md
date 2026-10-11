@@ -37,8 +37,9 @@ as-is and I make no promises concerning quality or security.
 - **A standalone JACK app**, which also runs under PipeWire, built with
   [DPF](https://github.com/DISTRHO/DPF). It has mic and line inputs, master and headphone outputs,
   and MIDI in and out, which a built-in menu connects and reconnects on the next start.
-- **A virtual SD card**: a disk-image file seeded with the factory TAPE card, with import, export
-  and reset commands. You can pull it out while TAPE runs.
+- **A virtual SD card that's a folder**: manage samples with your own file manager. Insert card
+  checks that a folder holds what TAPE expects, says exactly what to fix if it doesn't, and
+  restarts TAPE with it, as a power cycle does on the device.
 - **A headless runner** that plays the firmware from a script and records its audio, LEDs and MIDI
   out. The test suite uses it.
 
@@ -48,8 +49,8 @@ TEMPO and WAVE, CHOMPI's other two firmwares, may follow. Progress is tracked in
 ## Downloading a release
 
 Each [release](https://github.com/pablo-penovi/CHAMPI/releases) has a Linux x86_64 tarball. Unpack
-it and run `./champi` from the folder; keep `card-profiles/` next to the executable, since new SD
-cards are seeded from it.
+it and run `./champi` from the folder; keep `libchampi_fw_tape.so` (TAPE itself) and
+`card-profiles/` (which new SD cards are filled from) next to the executable.
 
 **Requirements.** The release needs glibc 2.41 or newer (Debian 13, Ubuntu 25.04, Fedora 42, Arch
 and later), and these libraries installed, which it doesn't bundle:
@@ -127,12 +128,13 @@ finished, about five seconds later, as on the device.
 | `--keymap <file>` | computer keys for the panel (see [Keyboard](#keyboard)) |
 | `--print-keymap` | print the keymap in use as `keymap.toml`, and exit |
 | `--test-mode` | start in TAPE's factory test (see [Test mode](#test-mode)) |
-| `--sd-image <file>` | use another SD-card image |
-| `--sd-reset`, `--sd-import <dir>`, `--sd-export <dir>` | manage the card, then exit (see [SD card](#sd-card)) |
+| `--sd-dir <folder>` | use this folder as the SD card, for this run only (see [SD card](#sd-card)) |
+| `--sd-reset --yes` | restore the factory files on the card (`--sd-dir`, or the default card), then exit |
 
-The line under the panel shows whether TAPE is running, the rate and buffer size, the share of
-each cycle the firmware takes (load), JACK xruns, late blocks (cycles where the firmware didn't
-finish in time) and resampler dropouts. The same counts are printed on exit.
+The line under the panel shows the card that's in and whether TAPE is running, then the rate and
+buffer size, the share of each cycle the firmware takes (load), JACK xruns, late blocks (cycles
+where the firmware didn't finish in time) and resampler dropouts. With the mouse over it, it shows
+the card's full path instead. The counts are printed on exit too.
 
 ### The panel
 
@@ -151,7 +153,8 @@ The panel is laid out from the CHOMPI's own board files. Everything on it works 
   comes out of the phones outputs and master is silent; without them, the other way round.
 - **USB** (the socket at the front, bottom left): click to plug or unplug USB power. Scroll over it
   to set the battery voltage, between 2.8 V and 4.2 V (full). Its label shows the voltage.
-- **SD card** (the slot at the front, bottom right): click to pull the card out or put it back.
+- **SD card** (the slot at the front, bottom right): click to insert a card (see
+  [SD card](#sd-card)).
 
 The window keeps the panel's proportions and can shrink to half size.
 
@@ -179,7 +182,7 @@ the keys in the same places. These are the defaults:
 | `→` or `]` | turn the selected encoder clockwise; hold to keep turning |
 | `\` | push the selected encoder while held (turn it meanwhile for push-and-turn) |
 | `` ` `` | flip the toggle switch |
-| `F9` | pull the SD card out, or put it back |
+| `F9` | [insert a card](#sd-card) |
 | `F10` | plug or unplug USB power |
 | `F11` | plug or unplug headphones |
 | `F12` | plug or unplug line in |
@@ -201,7 +204,9 @@ default. A key with no name can be given by its Linux scancode. `--keymap <file>
 file. A mistake in the file stops `champi` with the line number.
 
 The actions are `key_1` to `key_25`, `chompi`, `play`, `loop`, `toggle`, `line_in`, `phones`,
-`usb`, `sd_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right`, `push` and `connections`.
+`usb`, `insert_card`, `encoder_1` to `encoder_6`, `turn_left`, `turn_right`, `push` and
+`connections`. `insert_card` was called `sd_card` before 1.3; keymaps that use the old name still
+load, until 2.0.
 
 ### Connections
 
@@ -360,15 +365,9 @@ tape machine. Hold play and loop together for two seconds to clear it.
 **Presets and options.** TAPE keeps the knob settings of every slot in `presets.json` on the card
 and writes it a few seconds after a change. `options.json` holds the global settings: record
 latch, the MIDI in and out channels, tape slew, the monitor position, which menu quantizes pitch,
-and split delay. TAPE reads it at boot and writes it back. To change one, export the card, edit
-the file and import it again:
-
-```sh
-build/tools/champi-headless --sd-export /tmp/card
-$EDITOR /tmp/card/options.json
-mkdir /tmp/opts && cp /tmp/card/options.json /tmp/opts/
-build/tools/champi-headless --sd-import /tmp/opts
-```
+and split delay. TAPE reads it at boot and writes it back. To change one, edit the file in the
+card's folder, then insert the card again (`F9`): TAPE only reads it at boot. A value TAPE
+wouldn't take, such as MIDI channel 17, is refused with the line it's on.
 
 **The battery.** Hold ENC6 for two seconds to see the battery level on its LED. TAPE shows "full"
 while the charger reports charging done (4.2 V on the USB socket's wheel), and keeps showing it
@@ -384,36 +383,82 @@ ways, the toggle flipped both ways, a line-in cable plugged in, USB unplugged an
 and 20 notes have come back in a row from MIDI out to MIDI in. For that last one, connect
 `CHAMPI:midi-out` to `CHAMPI:events-in`. Then press CHOMPI to leave the test.
 
-### Pulling the SD card
-
-Click the SD slot, or press `F9`. TAPE blinks every LED red for three seconds, then carries on
-with its built-in sample only: the shift menu won't change slots, and nothing is saved. Putting
-the card back changes nothing until TAPE restarts, as on the device: quit and start `champi` again.
-
 ## SD card
 
-The virtual SD card is a 4 GB sparse disk image at `~/.local/share/champi/sdcard.img` (or under
-`$XDG_DATA_HOME`). It's created on first use and seeded with the factory TAPE card from
-`third_party/CHOMPI/firmware/card-profiles/tape-2.0`.
+The SD card is a folder. Put samples in it, rename them or take them out with your own file
+manager, then insert the card so TAPE reads it.
 
-```sh
-build/tools/champi-headless --sd-import ~/samples   # copy a directory's contents to the card root
-build/tools/champi-headless --sd-export ~/card      # copy the whole card out
-build/tools/champi-headless --sd-reset              # start again from the factory card
-```
+**Where cards live.** On first start CHAMPI creates `~/.local/share/champi/cards/default/` (under
+`$XDG_DATA_HOME` if it's set) and fills it from the factory TAPE card, which a release ships in
+`card-profiles/tape-2.0` (a build from source uses
+`third_party/CHOMPI/firmware/card-profiles/tape-2.0`). `~/.local/share/champi/cards/` is where
+both Insert card dialogs start, but a card can be any folder anywhere.
 
-`champi` takes the same options. Given `--sd-reset`, `--sd-import` or `--sd-export`, it runs them
-and exits instead of starting. Samples are named `<jammi|cubbi>_<bank><slot>.wav`, as in
-`jammi_a1.wav`, in 48 kHz 16-bit stereo. TAPE makes the `_double` versions itself at boot.
+**Insert card.** Click the SD slot or press `F9`, then:
 
-`--sd-image <file>` uses another image. The image is an MBR disk with one FAT32 partition, so it
-can also be loop-mounted or used with mtools. Don't change it while CHAMPI runs.
+- **Select an existing folder…** opens CHAMPI's folder picker in the cards folder. Move with the
+  arrow keys, open a folder with `Enter` or a click, go up with `Backspace` or `..`, or type or
+  paste (`Ctrl+V`) a path into the field at the top. **Use this folder** (or `Ctrl+Enter`) takes
+  the folder shown, and a double-click takes the folder under the mouse. `Esc` cancels.
+- **Create a new folder…** names a new folder (`new card` to start with) inside the folder shown.
+  CHAMPI creates it and fills it from the factory card. A folder that already has files in it is
+  refused: select it instead.
+
+CHAMPI then checks the folder. If something in it isn't what TAPE expects, every problem is listed
+and nothing changes: the card that was in stays in and TAPE carries on. Otherwise, once you
+confirm, TAPE restarts to read the new card, as the CHOMPI does after a power cycle: the panel
+goes dark and TAPE boots with its rainbow. The window and the JACK connections stay as they are;
+the audio is silent for the second or so it takes.
+
+There's no pulling the card out: TAPE reads its card at boot only, so changing the card is always
+inserting another one. CHAMPI remembers the card in use, and the one before it, in
+`~/.config/champi/card.toml`, and starts with it next time.
+
+**What a card holds.** Only files at its root:
+
+| On the card | |
+|---|---|
+| `jammi_<bank><slot>.wav`, `cubbi_<bank><slot>.wav` | samples: bank `a`–`e`, slot `1`–`14` with no leading zero, as in `jammi_a1.wav`; 48 kHz, 16-bit, stereo PCM WAV |
+| `jammi_a1_double.wav` and so on | TAPE makes these itself at boot; each needs the sample it doubles next to it |
+| `options.json`, `presets.json` | TAPE's settings and slot presets, as TAPE writes them; TAPE creates them if they're missing |
+| `presets_temp.json`, `temp_rec.wav`, `test_file.txt`, `.batt_log.txt` | files TAPE writes itself |
+| one `.bin` | a firmware update for the CHOMPI's bootloader, as on the factory card; CHAMPI ignores it |
+| `.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`, `.Spotlight-V100/`, `System Volume Information/`… | left by macOS and Windows; ignored |
+
+Names are matched without regard to case, as on the FAT card TAPE expects, so `JAMMI_A1.WAV` is
+fine, but `jammi_a1.wav` and `JAMMI_A1.WAV` side by side would be the same file, so they aren't.
+Anything else is a problem: TAPE would never read it, or would read it wrong. Links are followed.
+
+**Fixing what the check finds.** Each problem names the file:
+
+- *TAPE only reads samples named jammi_<bank><slot>.wav…*, *bank f doesn't exist*, *slot 15
+  doesn't exist*, *without a leading zero*: rename the file.
+- *44100 Hz*, *mono*, *24-bit*, *32-bit float*: convert it to 48 kHz, 16-bit stereo, for example
+  `sox in.wav -r 48000 -c 2 -b 16 jammi_a1.wav`.
+- *not a WAV file*, *cut short*: the file is something else, or damaged; export it again.
+- *there's no jammi_a9.wav for it to double*: remove the `_double` file.
+- *TAPE doesn't use this file*, *TAPE only reads files at the card root*: remove it, or move the
+  samples out of the subfolder.
+- Problems in `options.json` and `presets.json` give the line: fix the value, or delete the file
+  and TAPE writes a fresh one at boot.
+
+**From the command line.** `--sd-dir <folder>` starts with another card for one run, without
+changing `card.toml`; a folder that fails the check stops `champi` with the list of problems.
+`--sd-reset --yes` copies the factory samples, `options.json`, `presets.json` and firmware file
+back onto the card (`--sd-dir`, or the default card) and exits. Files you added stay.
+
+Before 1.3 the card was a disk image, `~/.local/share/champi/sdcard.img`. It isn't used any more,
+and can be deleted.
 
 ## Headless runs
 
-`champi-headless --script <file>` boots the firmware from the SD card and drives it from a
-script. It writes the master output to a WAV file and the LEDs, MIDI out and script events to a
-log. Everything happens in real time.
+`champi-headless --script <file>` boots the firmware and drives it from a script. It writes the
+master output to a WAV file and the LEDs, MIDI out and script events to a log. Everything happens
+in real time.
+
+The card is `--sd-dir <folder>`, checked as Insert card checks it. Without one, each run gets a
+fresh copy of the factory card in a temporary folder, deleted afterwards, so scripted runs never
+write to your cards.
 
 ```sh
 cat > play.txt <<'END'
@@ -442,7 +487,6 @@ build/tools/champi-headless --script play.txt --wav play.wav --log play.log
 | `midiloop on\|off` | a cable from MIDI out back to MIDI in |
 | `usb on\|off` | USB power |
 | `battery <millivolts>` | the battery voltage |
-| `sd out\|in` | pull the SD card out, or put it back |
 | `mark <text>` | a marker in the log |
 
 Commands run one after another, so time passes only in `boot` and `wait`. To start in test mode,
@@ -463,10 +507,15 @@ sends.
 - **A MIDI controller does nothing.** Check it's ticked under MIDI in in the connections menu
   (`F8`), and that it sends on the MIDI in channel from `options.json`. Under a JACK2 server
   without a2jmidid, ALSA-only controllers aren't on the JACK graph, so they can't be listed.
-- **The panel stopped changing samples.** The SD card may be out: the status line says so. Put it
-  back and restart `champi`.
-- **A broken card.** `--sd-reset` starts again from the factory card. Export anything you want to
-  keep first.
+- **Insert card shows problems.** The folder has something TAPE wouldn't read, or would read
+  wrong. Each line names the file and what to do; see [SD card](#sd-card) for the usual fixes.
+  The card that was in stays in meanwhile.
+- **Start-up fell back to another card.** The card from last time was moved, deleted or changed so
+  that it fails the check, so CHAMPI started with the card before it, or the default card, and
+  listed why. Fix the original and insert it again with `F9`. If no card passes, TAPE doesn't
+  start and the panel only offers Insert card.
+- **A card's factory files got lost.** `--sd-reset --yes` (with `--sd-dir` for a card other than
+  the default) puts them back without touching the rest.
 
 ## Repository layout
 
