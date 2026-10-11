@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <pthread.h>
+#include <sched.h>
 
 #include "app.h"
 #include "daisycola/host.h"
@@ -77,6 +79,22 @@ void ChampiPlugin::run(const float** inputs, float** outputs, uint32_t frames, c
 {
     // Every connected controller arrives merged on one JACK port. What the mapping maps works the
     // panel, or becomes TAPE's own CC for a knob; the rest goes to the TRS jack as it is.
+    // ProcessAudio waits for TAPE's thread: run it at this thread's priority, so that a busy
+    // desktop can't hold it up while JACK waits. Once, from here, the only place that knows it.
+    if(!priority_set_)
+    {
+        priority_set_ = true;
+        int         policy = SCHED_OTHER;
+        sched_param param{};
+        if(pthread_getschedparam(pthread_self(), &policy, &param) == 0
+           && (policy == SCHED_FIFO || policy == SCHED_RR) && param.sched_priority > 0
+           && !champi::Runtime::Get().SetFirmwarePriority(param.sched_priority))
+            std::fprintf(stderr,
+                         "champi: can't give TAPE real-time priority %d (raise rtprio in "
+                         "/etc/security/limits.conf); expect xruns when the machine is busy\n",
+                         param.sched_priority);
+    }
+
     champi::PanelState& panel = champi::Runtime::Get().Panel();
     for(uint32_t i = 0; i < midi_count; i++)
     {

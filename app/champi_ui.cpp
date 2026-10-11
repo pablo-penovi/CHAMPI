@@ -11,19 +11,25 @@
 // that's all the panel does.
 //
 // Drawing is in panel millimetres; the panel is scaled to fit the window, with the status line
-// underneath. A skin folder can replace the logo and the glyphs on the CHOMPI, play and loop keys
-// with PNGs (see Skin below); none are shipped.
+// underneath. The art that never changes is drawn once into a framebuffer (the backdrop), and a
+// frame is only drawn when something on the panel has changed. A skin folder can replace the logo
+// and the glyphs on the CHOMPI, play and loop keys with PNGs (see Skin below); none are shipped.
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
 #include <initializer_list>
 #include <string>
 #include <utility>
 
 #include "DistrhoUI.hpp"
+// NanoVG's own API, for the backdrop's framebuffer, which DPF's NanoVG class doesn't wrap.
+#include "nanovg/nanovg.h"
+#include "nanovg/nanovg_gl_utils.h"
 #include "app.h"
 #include "champi_plugin.h"
 #include "connections_menu.h"
@@ -129,6 +135,12 @@ class ChampiUI : public UI
         insert_.ShowStartup(champi::Options().skipped_cards, champi::Options().card_dir);
     }
 
+    ~ChampiUI() override
+    {
+        if(backdrop_)
+            nvgluDeleteFramebuffer(backdrop_);
+    }
+
   protected:
     void parameterChanged(uint32_t, float) override {}
 
@@ -160,6 +172,7 @@ class ChampiUI : public UI
                 // The controllers on MIDI in may have changed, and with them the mapping.
                 graph_ = snapshot->graph;
                 PlayMapping();
+                dirty_ = true;
             }
         LearnMidi();
 
@@ -169,8 +182,18 @@ class ChampiUI : public UI
         {
             last_load_ = now;
             load_      = Plugin().Load();
+            dirty_     = true;
         }
-        repaint();
+
+        // Draw only when something changed: an event on the window, the panel's look, or the load
+        // figures. The menu and Insert card have cursors and their own state, so they always draw.
+        const Look look = CurrentLook();
+        if(dirty_ || menu_open_ || insert_.IsOpen() || !(look == shown_))
+        {
+            shown_ = look;
+            dirty_ = false;
+            repaint();
+        }
     }
 
     void onNanoDisplay() override
@@ -178,20 +201,12 @@ class ChampiUI : public UI
         if(!skin_loaded_)
             LoadSkin();
 
-        beginPath();
-        rect(0, 0, getWidth(), getHeight());
-        fillColor(kBackground);
-        fill();
-
         // Tiling window managers ignore the aspect ratio, so fit the panel and centre it.
         const View v = Fit();
+        DrawBackdrop(v);
         translate(v.x, v.y);
         scale(v.scale, v.scale);
 
-        DrawBody();
-        DrawLineArt();
-        DrawLogo();
-        DrawWells();
         for(int k = 1; k <= champi::kNumKeys; k++)
             DrawKey(k);
         DrawKeyNumbers();
@@ -233,6 +248,7 @@ class ChampiUI : public UI
 
     bool onMouse(const MouseEvent& ev) override
     {
+        dirty_ = true;
         if(ev.button != 1)
             return false;
         if(insert_.IsOpen())
@@ -276,6 +292,7 @@ class ChampiUI : public UI
 
     bool onMotion(const MotionEvent& ev) override
     {
+        dirty_ = true;
         float x, y;
         Fit().ToPanel(ev.pos, x, y);
         over_status_ = y > layout::kHeight;
@@ -287,6 +304,7 @@ class ChampiUI : public UI
 
     bool onScroll(const ScrollEvent& ev) override
     {
+        dirty_ = true;
         if(insert_.IsOpen())
         {
             const float steps = float(ev.delta.getY());
@@ -311,6 +329,7 @@ class ChampiUI : public UI
 
     bool onKeyboard(const KeyboardEvent& ev) override
     {
+        dirty_ = true;
         // On X11 a keycode is the evdev scancode plus 8: the physical key, whatever the layout.
         const champi::Scancode code = champi::Scancode(ev.keycode) - 8;
         const auto             kind = keyboard_.keymap().Lookup(code).kind;
@@ -348,6 +367,7 @@ class ChampiUI : public UI
     // Typed text goes to the folder picker's fields.
     bool onCharacterInput(const CharacterInputEvent& ev) override
     {
+        dirty_ = true;
         if(insert_.GetStage() != Stage::kPick)
             return false;
         if(!(ev.mod & (kModifierControl | kModifierAlt | kModifierSuper)))
@@ -358,6 +378,7 @@ class ChampiUI : public UI
     // Keys held when the window loses focus never get their release.
     void uiFocus(bool focus, CrossingMode) override
     {
+        dirty_ = true;
         if(!focus)
             keyboard_.ReleaseAll();
     }
@@ -764,6 +785,128 @@ class ChampiUI : public UI
         circle(x, y, outer);
         fillPaint(radialGradient(x, y, inner, outer, ToColor(l, 0.55f * a), ToColor(l, 0)));
         fill();
+    }
+
+    // ---- Drawing only what changes --------------------------------------------------------------
+
+    // What the panel shows that can change with no event on the window: the LEDs, controls moved by
+    // MIDI or by keys held down, the charger, the card and TAPE's state.
+    struct Look
+    {
+        champi::LedFrame      leds{};
+        uint32_t              keys    = 0; // bit k - 1 for KEYk
+        uint32_t              pushes  = 0; // bit e - 1 for ENCe
+        int                   turned[champi::kNumEncoders] = {};
+        bool                  toggle = false, line_in = false, phones = false, usb = false;
+        uint32_t              battery_mv = 0;
+        bool                  keyboard_used = false;
+        int                   selected      = 0;
+        bool                  running = false, booted = false;
+        std::filesystem::path card;
+
+        bool operator==(const Look& o) const
+        {
+            // The colours only: a resend of the same colours counts up the sequence numbers.
+            return std::memcmp(leds.key, o.leds.key, sizeof leds.key) == 0
+                   && std::memcmp(leds.encoder, o.leds.encoder, sizeof leds.encoder) == 0
+                   && std::memcmp(&leds.encoder5_second, &o.leds.encoder5_second, sizeof leds.encoder5_second) == 0
+                   && keys == o.keys && pushes == o.pushes
+                   && std::equal(std::begin(turned), std::end(turned), std::begin(o.turned)) && toggle == o.toggle
+                   && line_in == o.line_in && phones == o.phones && usb == o.usb && battery_mv == o.battery_mv
+                   && keyboard_used == o.keyboard_used && selected == o.selected && running == o.running
+                   && booted == o.booted && card == o.card;
+        }
+    };
+
+    Look CurrentLook()
+    {
+        champi::Runtime&    runtime = champi::Runtime::Get();
+        champi::PanelState& panel   = runtime.Panel();
+        Look                l;
+        l.leds = leds_;
+        for(int k = 1; k <= champi::kNumKeys; k++)
+            l.keys |= uint32_t(panel.KeyPressed(k)) << (k - 1);
+        for(int e = 1; e <= champi::kNumEncoders; e++)
+        {
+            l.pushes |= uint32_t(panel.EncoderPushed(e)) << (e - 1);
+            l.turned[e - 1] = mouse_.Turned(e) + keyboard_.Turned(e) + Plugin().MidiMap().Turned(e);
+        }
+        l.toggle        = panel.Toggle();
+        l.line_in       = panel.LineIn();
+        l.phones        = panel.Phones();
+        l.usb           = runtime.Charger().UsbPower();
+        l.battery_mv    = runtime.Charger().BatteryMillivolts();
+        l.keyboard_used = keyboard_.Used();
+        l.selected      = keyboard_.Selected();
+        l.running       = runtime.Running();
+        l.booted        = l.running && runtime.Booted();
+        l.card          = runtime.Card();
+        return l;
+    }
+
+    // The window's background and the panel's art that never changes: the body, the line art, the
+    // logo and the key wells. They're most of what NanoVG has to tessellate, so they're drawn into a
+    // framebuffer once per window size and each frame puts up that image. Without a framebuffer
+    // they're drawn every frame.
+    void DrawBackdrop(const View& v)
+    {
+        const int w = int(getWidth()), h = int(getHeight());
+        if(!backdrop_ || backdrop_w_ != w || backdrop_h_ != h)
+            RenderBackdrop(v, w, h);
+        if(!backdrop_)
+        {
+            DrawBackdropArt(v);
+            return;
+        }
+        NVGcontext* const ctx   = getContext();
+        const NVGpaint    paint = nvgImagePattern(ctx, 0, 0, float(w), float(h), 0, backdrop_->image, 1);
+        nvgBeginPath(ctx);
+        nvgRect(ctx, 0, 0, float(w), float(h));
+        nvgFillPaint(ctx, paint);
+        nvgFill(ctx);
+    }
+
+    // Called at the start of a frame, before anything is drawn: the window's frame is ended, the
+    // backdrop drawn in a frame of its own in the framebuffer, and the window's frame begun again.
+    void RenderBackdrop(const View& v, int w, int h)
+    {
+        if(backdrop_)
+            nvgluDeleteFramebuffer(backdrop_);
+        backdrop_w_ = w;
+        backdrop_h_ = h;
+        NanoVG::endFrame();
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        backdrop_ = nvgluCreateFramebuffer(getContext(), w, h, 0);
+        if(backdrop_)
+        {
+            nvgluBindFramebuffer(backdrop_);
+            glViewport(0, 0, w, h);
+            glClearColor(0, 0, 0, 0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+            NanoVG::beginFrame(uint(w), uint(h));
+            DrawBackdropArt(v);
+            NanoVG::endFrame();
+            nvgluBindFramebuffer(nullptr);
+            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        }
+        NanoVG::beginFrame(uint(w), uint(h));
+    }
+
+    void DrawBackdropArt(const View& v)
+    {
+        beginPath();
+        rect(0, 0, getWidth(), getHeight());
+        fillColor(kBackground);
+        fill();
+        save();
+        translate(v.x, v.y);
+        scale(v.scale, v.scale);
+        DrawBody();
+        DrawLineArt();
+        DrawLogo();
+        DrawWells();
+        restore();
     }
 
     void DrawBody()
@@ -2351,6 +2494,10 @@ class ChampiUI : public UI
     champi::MouseControl                  mouse_;
     champi::KeyboardControl               keyboard_;
     champi::LedFrame                      leds_{};
+    Look                                  shown_{};          // as last drawn
+    bool                                  dirty_    = true;  // something not in Look changed
+    NVGLUframebuffer*                     backdrop_ = nullptr;
+    int                                   backdrop_w_ = 0, backdrop_h_ = 0;
     champi::AudioLoad                     load_{};
     std::chrono::steady_clock::time_point last_load_{};
     Skin                                  skin_;

@@ -23,9 +23,13 @@ dpf_add_plugin(champi
     FILES_DSP champi_plugin.cpp
     FILES_UI champi_ui.cpp)
 target_include_directories(champi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# NanoVG's framebuffer helpers, off in DPF by default: the panel draws its unchanging art into one
+# once and reuses it every frame.
+target_compile_definitions(dgl-opengl PRIVATE DGL_USE_NANOVG_FBO)
 target_link_libraries(champi PUBLIC champi_runtime champi_host)
 target_link_libraries(champi-dsp PRIVATE champi_panel champi_warnings)
 target_link_libraries(champi-ui PRIVATE champi_panel champi_warnings)
+target_include_directories(champi-ui PRIVATE ${DPF_ROOT_DIR}/dgl/src)
 
 # DPF's standalone main() becomes dpf_jack_main, so CHAMPI's options can run first.
 set_source_files_properties(${DPF_ROOT_DIR}/distrho/DistrhoPluginMain.cpp

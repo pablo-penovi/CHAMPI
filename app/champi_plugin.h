@@ -57,6 +57,7 @@ class ChampiPlugin : public Plugin
     champi::HostAudio     audio_;
     champi::MidiSplitter  midi_out_;
     champi::MidiMapper    midi_map_;
+    bool                  priority_set_ = false; // TAPE has been given the audio thread's priority
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChampiPlugin)
 };

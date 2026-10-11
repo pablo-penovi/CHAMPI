@@ -1,7 +1,11 @@
 // The Runtime with TAPE's firmware library: starting, power-cycling to another card, and a card
 // that no longer passes its check when it goes in. One Runtime per process, so one test.
 #include <chrono>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <sched.h>
+#include <sstream>
+#include <sys/resource.h>
 #include <thread>
 
 #include "daisy_seed.h"
@@ -23,6 +27,32 @@ void WaitBooted(Runtime& runtime, const char* what)
         ASSERT_TRUE(daisycola::GetBoardState().running) << what;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+}
+
+// Threads of this process under SCHED_FIFO, from the policy field (41) of /proc's stat.
+int FifoThreads()
+{
+    int count = 0;
+    for(const fs::directory_entry& task : fs::directory_iterator("/proc/self/task"))
+    {
+        std::ifstream     file(task.path() / "stat");
+        const std::string stat((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        const size_t      close = stat.rfind(')');
+        if(close == std::string::npos)
+            continue;
+        std::istringstream fields(stat.substr(close + 2)); // from field 3, the state
+        std::string        field;
+        for(int i = 3; i <= 41 && fields >> field; i++)
+            if(i == 41 && std::stoi(field) == SCHED_FIFO)
+                count++;
+    }
+    return count;
+}
+
+bool RealtimeAllowed()
+{
+    rlimit limit{};
+    return getrlimit(RLIMIT_RTPRIO, &limit) == 0 && limit.rlim_cur >= 1;
 }
 
 fs::path CopyFactory(const TempDir& dir, const std::string& name)
@@ -50,6 +80,15 @@ TEST(Runtime, PowerCyclesToAnotherCard)
     EXPECT_EQ(runtime.MidiInChannel(), 0);
     EXPECT_THROW(runtime.Start(a), std::logic_error);
 
+    // TAPE's thread at real-time priority, where this machine allows it, also after a power cycle.
+    const bool realtime = RealtimeAllowed();
+    if(realtime)
+    {
+        EXPECT_EQ(FifoThreads(), 0);
+        EXPECT_TRUE(runtime.SetFirmwarePriority(1));
+        EXPECT_EQ(FifoThreads(), 1);
+    }
+
     // The toggle and the line-in plug stay where the player left them.
     runtime.Panel().SetToggle(false);
     runtime.Panel().SetLineIn(true);
@@ -62,6 +101,10 @@ TEST(Runtime, PowerCyclesToAnotherCard)
     EXPECT_FALSE(runtime.Panel().Toggle());
     EXPECT_TRUE(daisycola::GetPin(daisy::seed::D21)) << "the line-in plug, wired again";
     EXPECT_TRUE(daisycola::GetAudioFormat().started);
+    if(realtime)
+    {
+        EXPECT_EQ(FifoThreads(), 1) << "the new firmware thread gets the priority too";
+    }
 
     // A card that stopped passing between the window's check and the insert: the old one goes back.
     WriteHostFile(c / "notes.txt", "x");
@@ -80,5 +123,10 @@ TEST(Runtime, PowerCyclesToAnotherCard)
     WaitBooted(runtime, "a card into an empty slot");
     EXPECT_EQ(runtime.Card(), c);
 
+    if(realtime)
+    {
+        EXPECT_TRUE(runtime.SetFirmwarePriority(0));
+        EXPECT_EQ(FifoThreads(), 0);
+    }
     EXPECT_TRUE(runtime.Stop());
 }

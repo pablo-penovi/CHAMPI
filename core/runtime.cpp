@@ -26,6 +26,11 @@ namespace
 {
 // How long TAPE gets to finish a card access and halt before a power cycle.
 constexpr uint32_t kHaltTimeoutMs = 3000;
+
+// The shortest delay TAPE's main loop takes. It asks for 10 us a pass, which wakes its thread about
+// 60,000 times a second; nothing in the loop needs to run more often than once a millisecond, and
+// interrupts still come on time.
+constexpr uint32_t kMinMainDelayUs = 250;
 } // namespace
 
 Runtime& Runtime::Get()
@@ -69,6 +74,7 @@ void Runtime::Boot(const fs::path& card_dir, bool test_mode)
         panel_.SetEncoderPushed(6, true);
     daisycola::SdInsert(card_dir.string());
     daisycola::SetAudioClock(clock_);
+    daisycola::SetMinMainDelay(kMinMainDelayUs);
     midi_in_channel_.store(MidiInChannelOfCard(card_dir));
     {
         std::lock_guard<std::mutex> lock(lock_);
@@ -77,6 +83,14 @@ void Runtime::Boot(const fs::path& card_dir, bool test_mode)
     booted_.store(false);
     daisycola::Start();
     running_.store(true);
+    if(const int priority = priority_.load(); priority > 0)
+        daisycola::SetFirmwarePriority(priority);
+}
+
+bool Runtime::SetFirmwarePriority(int priority)
+{
+    priority_.store(priority);
+    return !running_.load() || daisycola::SetFirmwarePriority(priority);
 }
 
 std::vector<CardProblem> Runtime::PowerCycle(const fs::path& card_dir, const fs::path& fallback)

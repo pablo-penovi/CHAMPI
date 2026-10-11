@@ -83,7 +83,8 @@ cmake -B build
 cmake --build build
 ```
 
-In an existing clone, run `git submodule update --init --recursive` first. Run the tests with
+Without `-DCMAKE_BUILD_TYPE` the build is a Release build; pass `-DCMAKE_BUILD_TYPE=Debug` to
+debug. In an existing clone, run `git submodule update --init --recursive` first. Run the tests with
 `ctest --test-dir build`; the headless tests run the firmware in real time and take about half a
 minute in parallel. For a ThreadSanitizer or AddressSanitizer build, configure a separate build
 directory with `-DCHAMPI_SANITIZER=thread` or `-DCHAMPI_SANITIZER=address`.
@@ -502,8 +503,9 @@ sends.
 - **No sound.** Check master out is connected to your playback ports in the connections menu
   (`F8`), and that the volume knob (ENC6) isn't down. TAPE ignores the panel for the first five
   seconds after boot.
-- **Xruns or late blocks.** Run the graph at 48 kHz and a buffer of 64 frames or more. The firmware
-  thread runs at normal priority, so a fully loaded machine can delay it.
+- **Xruns or late blocks.** Run the graph at 48 kHz and a buffer of 64 frames or more. CHAMPI gives
+  the firmware thread JACK's real-time priority; if it says it can't, raise `rtprio` for your user
+  (for example in `/etc/security/limits.conf`), or a fully loaded machine can delay the firmware.
 - **A MIDI controller does nothing.** Check it's ticked under MIDI in in the connections menu
   (`F8`), and that it sends on the MIDI in channel from `options.json`. Under a JACK2 server
   without a2jmidid, ALSA-only controllers aren't on the JACK graph, so they can't be listed.

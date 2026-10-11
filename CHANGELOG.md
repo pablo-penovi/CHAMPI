@@ -7,6 +7,26 @@ All notable changes to CHAMPI are listed here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-11
+
+Less CPU, and a firmware that keeps up with JACK on a busy machine. Built on daisycola v0.3.0.
+
+### Changed
+
+- TAPE's main loop takes at least 250 µs per pass instead of 10 µs. Its thread woke about 60,000
+  times a second; an idle CHAMPI now uses about a third of the CPU it did (headless, 26% of a core
+  down to 8% with the build-type change below). Interrupts, audio included, still run on time.
+  TAPE's boot takes about 0.6 s longer, as it counts 5,000 short waits while it clears the shift
+  registers.
+- The firmware thread, which runs TAPE's audio, gets the JACK audio thread's real-time priority.
+  Before, JACK waited on a normal-priority thread that any busy program could hold up. If the system
+  doesn't allow it, CHAMPI says so on start.
+- The panel is only drawn when something on it changes, instead of about 33 times a second, and its
+  unchanging art (the body, line art, logo and key wells) is drawn once into a framebuffer and reused.
+  The window's own drawing went from about 1.2% of a core to 0.25% while nothing changes.
+- A build without `CMAKE_BUILD_TYPE` is a Release build. Unoptimised, TAPE's audio took about 2.4
+  times the CPU. Releases were already built that way.
+
 ## [1.3.0] - 2026-10-11
 
 The SD card is a folder on the host instead of a disk image. CHAMPI has no users to migrate yet, so
@@ -157,7 +177,8 @@ The first release: the real CHOMPI TAPE 2.0 firmware, unpatched, running nativel
 - The mode switch's lever is drawn up for record mode and down for playback
   ([#13](https://github.com/pablo-penovi/CHAMPI/pull/13)).
 
-[Unreleased]: https://github.com/pablo-penovi/CHAMPI/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/pablo-penovi/CHAMPI/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/pablo-penovi/CHAMPI/compare/v1.0.0...v1.1.0
