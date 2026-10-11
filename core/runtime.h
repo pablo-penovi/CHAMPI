@@ -69,6 +69,12 @@ class Runtime
     /** The card in, or empty if there's none. */
     std::filesystem::path Card() const;
 
+    /** Runs TAPE's thread, and with it its audio interrupt, under SCHED_FIFO at `priority`, now and
+     *  after every power cycle; 0 for the normal scheduler. For a host whose real-time audio thread
+     *  waits on TAPE in ProcessAudio: give it that thread's priority. Any thread. Returns false if
+     *  TAPE runs and the system refused (no RLIMIT_RTPRIO for it); it's tried again at each start. */
+    bool SetFirmwarePriority(int priority);
+
     /** TAPE's MIDI in channel, 0-15, read from the card's options.json when it went in. TAPE reads
      *  it at boot too, so it holds until the next power cycle. */
     int MidiInChannel() const { return midi_in_channel_.load(); }
@@ -89,6 +95,7 @@ class Runtime
     std::filesystem::path    card_;
     mutable std::mutex       lock_; // held by PowerCycle and Booted's lookups, and guards card_
     std::atomic<int>         midi_in_channel_{0};
+    std::atomic<int>         priority_{0};
     std::atomic<bool>        loaded_{false};
     bool                     fresh_  = false; // loaded, and not wired since
     bool                     broken_ = false; // a power cycle failed to unload or reload the library
